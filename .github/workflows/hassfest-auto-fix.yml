@@ -63,7 +63,7 @@ jobs:
 
       - name: Commit auto-fixes
         if: steps.initial-check.outcome == 'failure'
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "chore(hassfest): auto-sort manifest keys"
           file_pattern: "custom_components/*/manifest.json"
