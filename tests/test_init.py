@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,7 +19,12 @@ from custom_components.bermuda import (
     async_reload_entry,
     async_remove_config_entry_device,
 )
-from custom_components.bermuda.const import DOMAIN, IrkTypes
+from custom_components.bermuda.const import (
+    CONF_RSSI_OFFSETS,
+    DOMAIN,
+    IrkTypes,
+    SUBENTRY_TYPE_CALIBRATION,
+)
 from custom_components.bermuda.coordinator import BermudaDataUpdateCoordinator
 
 from .const import MOCK_CONFIG
@@ -85,10 +91,10 @@ class TestAsyncMigrateEntry:
     """Tests for async_migrate_entry function."""
 
     @pytest.mark.asyncio
-    async def test_migrate_entry_version_1(self, hass: HomeAssistant) -> None:
-        """Test migration with version 1 (current)."""
+    async def test_migrate_entry_version_3(self, hass: HomeAssistant) -> None:
+        """Current-version entries require no migration."""
         entry = MagicMock(spec=ConfigEntry)
-        entry.version = 1
+        entry.version = 3
         entry.minor_version = 0
 
         result = await async_migrate_entry(hass, entry)
@@ -96,15 +102,38 @@ class TestAsyncMigrateEntry:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_migrate_entry_version_2(self, hass: HomeAssistant) -> None:
-        """Test migration with version 2."""
+    async def test_migrate_entry_newer_version_is_rejected(self, hass: HomeAssistant) -> None:
+        """Entries from a future integration revision are not downgraded."""
         entry = MagicMock(spec=ConfigEntry)
-        entry.version = 2
+        entry.version = 4
         entry.minor_version = 0
 
         result = await async_migrate_entry(hass, entry)
 
-        assert result is True
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_migrate_entry_imports_calibration_subentries(self, hass: HomeAssistant) -> None:
+        """Existing scanner calibrations are retained by the fork migration."""
+        entry = MagicMock(spec=ConfigEntry)
+        entry.version = 2
+        entry.minor_version = 1
+        entry.options = {"update_interval": 10.0}
+        entry.subentries = {
+            "calibration": SimpleNamespace(
+                subentry_type=SUBENTRY_TYPE_CALIBRATION,
+                data={"scanner": "aa:bb:cc:dd:ee:ff", "rssi_offset": -4.0},
+            )
+        }
+
+        with patch.object(hass.config_entries, "async_update_entry") as update_entry:
+            assert await async_migrate_entry(hass, entry)
+
+        update_entry.assert_called_once_with(
+            entry,
+            options={"update_interval": 10.0, CONF_RSSI_OFFSETS: {"aa:bb:cc:dd:ee:ff": -4.0}},
+            version=3,
+        )
 
 
 class TestAsyncRemoveConfigEntryDevice:

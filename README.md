@@ -47,6 +47,10 @@ Bermuda aims to let you track any bluetooth device, and have Home Assistant tell
 
 This fork extends upstream Bermuda with features focused on **fingerprint-based room detection** and **Google Find My Device (FMDN) support**. All upstream functionality is preserved. The additions below are not available in [agittins/bermuda](https://github.com/agittins/bermuda).
 
+### Private BLE-only mode
+
+For dense Bluetooth environments, enable **Private BLE devices only** in Global Options. Bermuda then retains only Bluetooth scanners and addresses associated with devices enrolled through Home Assistant's [Private BLE Device](https://www.home-assistant.io/integrations/private_ble_device/) integration. Rotating iPhone and Apple Watch addresses continue to resolve through their IRKs; ordinary BLE discovery, iBeacons, and FMDN item trackers are intentionally excluded. Disable this mode to use those other tracking features.
+
 ### Google Find My Device (FMDN) Support
 
 Track devices on the Google Find My Device Network -- Android phones, Pixel Buds, and third-party FMDN trackers such as Motorola Moto Tag, Pebblebee, or Chipolo.
@@ -126,7 +130,7 @@ Reduces Home Assistant database writes by approximately 98%, which is critical f
 - **For FMDN (Google Find My) tracking**: [GoogleFindMy-HA](https://github.com/jleinenbach/GoogleFindMy-HA) v1.7.0-3 or later. This is only required if you want to track devices on the Google Find My Device Network. All other Bermuda features work without it.
 
 - Bermuda! I strongly recommend installing Bermuda via HACS:
-  [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=jleinenbach&repository=bermuda&category=Integration)
+  [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=hovzoub&repository=bermuda-jleinenbach&category=Integration)
 
 ## Documentation and help
 

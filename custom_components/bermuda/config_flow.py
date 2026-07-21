@@ -30,6 +30,7 @@ from .const import (
     CONF_DEVTRACK_TIMEOUT,
     CONF_MAX_RADIUS,
     CONF_MAX_VELOCITY,
+    CONF_PRIVATE_BLE_ONLY,
     CONF_RECORDER_FRIENDLY,
     CONF_REF_POWER,
     CONF_REFERENCE_TRACKERS,
@@ -45,6 +46,7 @@ from .const import (
     DEFAULT_FMDN_MODE,
     DEFAULT_MAX_RADIUS,
     DEFAULT_MAX_VELOCITY,
+    DEFAULT_PRIVATE_BLE_ONLY,
     DEFAULT_RECORDER_FRIENDLY,
     DEFAULT_REF_POWER,
     DEFAULT_SMOOTHING_SAMPLES,
@@ -78,7 +80,7 @@ if TYPE_CHECKING:
 class BermudaFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for bermuda."""
 
-    VERSION = 1
+    VERSION = 3  # v3: import legacy calibration subentries into rssi_offsets
     # CONNECTION_CLASS = config_entries.CONN_CLASS_CLOUD_POLL
 
     def __init__(self) -> None:
@@ -256,6 +258,10 @@ class BermudaOptionsFlowHandler(OptionsFlowWithConfigEntry):
             vol.Optional(
                 CONF_RECORDER_FRIENDLY,
                 default=self.options.get(CONF_RECORDER_FRIENDLY, DEFAULT_RECORDER_FRIENDLY),
+            ): bool,
+            vol.Optional(
+                CONF_PRIVATE_BLE_ONLY,
+                default=self.options.get(CONF_PRIVATE_BLE_ONLY, DEFAULT_PRIVATE_BLE_ONLY),
             ): bool,
         }
 

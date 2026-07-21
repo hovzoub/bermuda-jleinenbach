@@ -57,6 +57,7 @@ from .bermuda_irk import BermudaIrkManager
 from .const import (
     _LOGGER,
     _LOGGER_SPAM_LESS,
+    ADDR_TYPE_PRIVATE_BLE_DEVICE,
     BDADDR_TYPE_NOT_MAC48,
     BDADDR_TYPE_RANDOM_RESOLVABLE,
     CONF_ATTENUATION,
@@ -66,6 +67,7 @@ from .const import (
     CONF_FMDN_MODE,
     CONF_MAX_RADIUS,
     CONF_MAX_VELOCITY,
+    CONF_PRIVATE_BLE_ONLY,
     CONF_RECORDER_FRIENDLY,
     CONF_REF_POWER,
     CONF_RSSI_OFFSETS,
@@ -76,6 +78,7 @@ from .const import (
     DEFAULT_DEVTRACK_TIMEOUT,
     DEFAULT_MAX_RADIUS,
     DEFAULT_MAX_VELOCITY,
+    DEFAULT_PRIVATE_BLE_ONLY,
     DEFAULT_RECORDER_FRIENDLY,
     DEFAULT_REF_POWER,
     DEFAULT_SMOOTHING_SAMPLES,
@@ -94,13 +97,14 @@ from .const import (
     SIGNAL_DEVICE_NEW,
     SIGNAL_SCANNERS_CHANGED,
     UPDATE_INTERVAL,
+    IrkTypes,
 )
 from .correlation import AreaProfile, CorrelationStore, RoomProfile
 from .fmdn import FmdnIntegration
 from .metadevice_manager import MetadeviceManager
 from .scanner_calibration import ScannerCalibrationManager, update_scanner_calibration
 from .services import BermudaServiceHandler
-from .util import is_mac_address, normalize_address, normalize_mac
+from .util import is_mac_address, mac_norm, normalize_address, normalize_mac
 
 Cancellable = Callable[[], None]
 CORRELATION_SAVE_INTERVAL = 300  # Save learned correlations every 5 minutes
@@ -151,6 +155,7 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         self.config_entry = entry
 
         self.sensor_interval = entry.options.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+        self.private_ble_only = bool(entry.options.get(CONF_PRIVATE_BLE_ONLY, DEFAULT_PRIVATE_BLE_ONLY))
 
         # set some version flags
         # Cast to int to avoid mypy literal comparison warnings when HA version is known at import time
@@ -1536,8 +1541,11 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
                     # BlueZ is pushing bogus adverts for paired but absent devices.
                     continue
 
+                if not self._should_ingest_advert(bledevice.address):
+                    continue
+
                 # ============================================================
-                # RESOLUTION FIRST: Identity resolvers run BEFORE any filtering
+                # RESOLUTION FIRST: Identity resolvers run BEFORE processing
                 # ============================================================
                 # CRITICAL: The identity resolution hooks MUST run BEFORE
                 # process_advertisement() so that rotating MAC addresses can be
@@ -1586,6 +1594,36 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
 
         # end of for ha_scanner loop
         return True
+
+    def _should_ingest_advert(self, address: str) -> bool:
+        """
+        Return whether an advertisement should become a Bermuda device.
+
+        In private-BLE-only mode, direct sources from enrolled Private BLE
+        Devices are always retained. Other addresses are IRK-resolved before
+        allocating a BermudaDevice, so rotating iPhone and Watch addresses are
+        still accepted while ordinary BLE discovery stays out of the device and
+        per-scanner advert collections.
+
+        FMDN and iBeacon advertisements are intentionally suppressed in this
+        mode; disable the option to use those features.
+        """
+        if not getattr(self, "private_ble_only", False):
+            return True
+
+        normalized = mac_norm(address)
+        private_sources = {
+            mac_norm(source)
+            for metadevice in self.metadevices.values()
+            if metadevice.address_type == ADDR_TYPE_PRIVATE_BLE_DEVICE
+            for source in metadevice.metadevice_sources
+        }
+        private_sources.update(mac_norm(source) for source in self.pb_state_sources.values() if source is not None)
+        if normalized in private_sources:
+            return True
+
+        _matched, result = self.irk_manager.scan_device(normalized)
+        return result not in IrkTypes.unresolved()
 
     def prune_devices(self, force_pruning: bool = False) -> None:  # noqa: C901, FBT001
         """

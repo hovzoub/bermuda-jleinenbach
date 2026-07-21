@@ -12,14 +12,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from homeassistant.core import callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.entity_registry import async_migrate_entries
 
-from .const import _LOGGER, DOMAIN, PLATFORMS, STARTUP_MESSAGE
+from .const import (
+    _LOGGER,
+    CONF_RSSI_OFFSET,
+    CONF_RSSI_OFFSETS,
+    CONF_SCANNER,
+    DOMAIN,
+    PLATFORMS,
+    STARTUP_MESSAGE,
+    SUBENTRY_TYPE_CALIBRATION,
+)
 from .coordinator import BermudaDataUpdateCoordinator
-from .util import mac_math_offset, normalize_address
+from .util import normalize_address
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -80,36 +87,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: BermudaConfigEntry) -> b
 
 
 async def async_migrate_entry(hass: HomeAssistant, config_entry: BermudaConfigEntry) -> bool:
-    """Migrate previous config entries."""
+    """Migrate prior Bermuda entries while retaining scanner calibration."""
     _LOGGER.debug("Migrating config from version %s.%s", config_entry.version, config_entry.minor_version)
-    _oldversion = f"{config_entry.version}.{config_entry.minor_version}"
 
-    if config_entry.version == 3:  # it won't be.
-        # Bogus version for now, wanted to placeholder the migrate_entries / unique_id thing.
-        # If we need to manage unique_id of sensors, we probably just need
-        # to manage the callback, but not worry about the hass update.
-        #
-        # This is lifted from the discussion at https://community.home-assistant.io/t/migrating-unique-ids/348512
-        #
-        # Also worth looking at https://github.com/home-assistant/core/pull/115265/files for an example
-        # of migrating unique_ids from one form to another.
-        #
-        old_unique_id = config_entry.unique_id
-        new_unique_id = mac_math_offset(old_unique_id, 3)
-
-        @callback
-        def update_unique_id(entity_entry):
-            """Update unique_id of an entity."""
-            return {"new_unique_id": entity_entry.unique_id.replace(old_unique_id, new_unique_id)}
-
-        if old_unique_id != new_unique_id:
-            await async_migrate_entries(hass, config_entry.entry_id, update_unique_id)
-            hass.config_entries.async_update_entry(config_entry, unique_id=new_unique_id)
-
+    if config_entry.version > 3:
+        _LOGGER.error("Cannot migrate newer Bermuda config entry version %s", config_entry.version)
         return False
 
-    if f"{config_entry.version}.{config_entry.minor_version}" != _oldversion:
-        _LOGGER.info("Migrated config entry to version %s.%s", config_entry.version, config_entry.minor_version)
+    if config_entry.version < 3:
+        options = dict(getattr(config_entry, "options", {}))
+        calibration_offsets = {
+            subentry.data[CONF_SCANNER]: subentry.data[CONF_RSSI_OFFSET]
+            for subentry in getattr(config_entry, "subentries", {}).values()
+            if subentry.subentry_type == SUBENTRY_TYPE_CALIBRATION
+            and CONF_SCANNER in subentry.data
+            and CONF_RSSI_OFFSET in subentry.data
+        }
+        if calibration_offsets:
+            options[CONF_RSSI_OFFSETS] = calibration_offsets
+        hass.config_entries.async_update_entry(config_entry, options=options, version=3)
+        _LOGGER.info("Migrated %d scanner RSSI offset(s) into Bermuda options", len(calibration_offsets))
 
     return True
 

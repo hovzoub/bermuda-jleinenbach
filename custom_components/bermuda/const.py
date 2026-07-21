@@ -402,13 +402,13 @@ class IrkTypes(Enum):
 # Accoring to the backend comments, BlueZ times out adverts at 180 seconds, and HA
 # expires adverts at 195 seconds to avoid churning.
 #
-PRUNE_MAX_COUNT = 1000  # How many device entries to allow at maximum
+PRUNE_MAX_COUNT = 300  # Dense-site safety cap; tracked devices and scanners are exempt
 PRUNE_TIME_INTERVAL = 180  # Every 3m, prune stale devices
 # ### Note about timeouts: Bluez and HABT cache for 180 or 195 seconds. Setting
 # timeouts below that may result in prune/create/prune churn, but as long as
 # we only re-create *fresh* devices the risk is low.
-PRUNE_TIME_DEFAULT = 86400  # Max age of regular device entries (1day)
-PRUNE_TIME_UNKNOWN_IRK = 240  # Resolvable Private addresses change often, prune regularly.
+PRUNE_TIME_DEFAULT = 1800  # Max age of untracked regular device entries (30 minutes)
+PRUNE_TIME_UNKNOWN_IRK = 90  # Unknown rotating addresses are cheap to rediscover.
 # see Bluetooth Core Spec, Vol3, Part C, Appendix A, Table A.1: Defined GAP timers
 PRUNE_TIME_KNOWN_IRK: Final[int] = 16 * 60  # spec "recommends" 15 min max address age. Round up to 16 :-)
 PRUNE_TIME_FMDN: Final[int] = 20 * 60  # Aggressive pruning for rotating FMDN source MACs
@@ -432,7 +432,15 @@ DOCS[CONFDATA_SCANNERS] = "Persisted set of known scanners (proxies)"
 CONF_DEVICES = "configured_devices"
 DOCS[CONF_DEVICES] = "Identifies which bluetooth devices we wish to expose"
 
+# Limit Bermuda to scanners and devices enrolled through Home Assistant's
+# Private BLE Device integration. This is intended for dense BLE environments
+# where untracked advertisements would otherwise dominate each update cycle.
+CONF_PRIVATE_BLE_ONLY, DEFAULT_PRIVATE_BLE_ONLY = "private_ble_only", False
+
 CONF_SCANNERS = "configured_scanners"
+CONF_SCANNER = "scanner"
+CONF_RSSI_OFFSET = "rssi_offset"
+SUBENTRY_TYPE_CALIBRATION = "calibration"
 
 CONF_FMDN_MODE = "fmdn_mode"
 FMDN_MODE_RESOLVED_ONLY = "resolved_only"
