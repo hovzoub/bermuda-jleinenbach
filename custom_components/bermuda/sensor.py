@@ -168,14 +168,16 @@ class BermudaSensor(BermudaEntity, SensorEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "area"
 
-    # Exclude volatile metadata from HA recorder database.
-    # These attributes change frequently (every coordinator cycle or on
-    # state transitions), forcing new DB rows that bloat the database.
-    # They are pure real-time diagnostics with no historical value.
-    # Live state, UI, automations and templates are NOT affected.
+    # Exclude state-transition metadata from the HA recorder database.
+    # Note: _unrecorded_attributes only controls what the recorder stores.
+    # Home Assistant still fires state_changed (and the recorder still writes
+    # a states row) whenever ANY attribute differs from the previous write.
+    # Values that change every coordinator cycle must therefore not be
+    # exposed as attributes at all; see extra_state_attributes below.
     _unrecorded_attributes = frozenset(
         {
-            # Time-based floats that change every cycle (~1.05s):
+            # Former time-based attributes, kept excluded as a safeguard
+            # in case they are ever exposed again:
             "last_good_area_age_s",
             "last_good_distance_age_s",
             "area_retention_seconds_remaining",
@@ -243,7 +245,10 @@ class BermudaSensor(BermudaEntity, SensorEntity):
             attribs["floor_name"] = self._device.floor_name
             attribs["floor_level"] = self._device.floor_level
         if self._attr_translation_key in ["area", "floor", "distance"]:
-            attribs.update(self._device.area_state_metadata())
+            # Only transition flags: time-derived ages would differ on every
+            # cycle and force a state_changed per entity per cycle.
+            # dump_devices and diagnostics still expose the underlying stamps.
+            attribs.update(self._device.area_state_flags())
         attribs["current_mac"] = self._device.current_mac
 
         return attribs

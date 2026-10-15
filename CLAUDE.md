@@ -2549,9 +2549,10 @@ info = manager.get_scanner_pair_info(nowstamp=current_time)
   - Per-scanner entities write all attributes to DB without filtering
 - **Root Cause**: Fork-specific `area_state_metadata()` returns monotonically changing float values. Combined with missing `_unrecorded_attributes` and `MEASUREMENT` state class on volatile BLE sensors.
 - **Solution (3 Stages)**:
-  1. **Stage 1**: `_unrecorded_attributes` frozenset excludes 3 time-based attributes from recorder (always active, no config needed)
+  1. **Stage 1**: `_unrecorded_attributes` frozenset excludes 3 time-based attributes from recorder (always active, no config needed). **Correction:** this only removed the values from the stored attribute JSON; it did not stop the per-cycle `state_changed` events or `states` rows (see Stage 4 and Lesson 75)
   2. **Stage 2**: `CONF_RECORDER_FRIENDLY` config toggle (default: `True`) in globalopts step. When enabled: `_unrecorded_attributes = MATCH_ALL` for per-scanner entities, rate-limiting for `ScannerRangeRaw`
   3. **Stage 3**: Conditional `state_class` — returns `None` when recorder-friendly (no long-term statistics), `MEASUREMENT` when disabled (debug mode)
+  4. **Stage 4**: The time-based ages (`last_good_area_age_s`, `last_good_distance_age_s`, `area_retention_seconds_remaining`, and `last_seen_age_seconds` on the scanner online sensor) are no longer exposed as entity attributes at all. Sensors publish `BermudaDevice.area_state_flags()` instead of `area_state_metadata()`. Measured before Stage 4 on a live install: ~40 Bermuda `state_changed`/s, 92 % attribute-only, ~89 % of all recorder rows
 - **Key Design Decisions**:
   - `_unrecorded_attributes` CANNOT be a `@property` — HA's `__init_subclass__` metaclass requires frozenset at class level or instance attribute in `__init__`
   - `MATCH_ALL` sentinel (`"*"`) excludes ALL attributes from recorder. HA checks via containment `MATCH_ALL in unrecorded_attributes` (see `db_schema.py:570`)
@@ -2561,7 +2562,7 @@ info = manager.get_scanner_pair_info(nowstamp=current_time)
 
   | Source | Before (Writes/Day) | After (Writes/Day) | Reduction |
   |--------|---------------------|---------------------|-----------|
-  | `area_state_metadata()` time-based | ~2,469,000 | 0 | **100%** |
+  | `area_state_metadata()` time-based | ~2,469,000 | 0 after Stage 4 (Stage 1 alone: unchanged row count, only smaller attribute JSON) | **100%** |
   | Distance/RSSI Long-Term-Stats | ~288,000 | 0 | **100%** |
   | Per-Scanner Attributes | ~864,000 | 0 | **100%** |
   | Per-Scanner Raw (no rate-limit) | ~823,000 | ~82,300 | **90%** |
@@ -8077,3 +8078,22 @@ rssi_readings[scanner] = advert.rssi
 **Rule of Thumb**: After a data source recovers from an outage, exclude its data from
 sensitive algorithms for a grace period. Less sensitive algorithms (with their own
 dampening, like streak requirements) can include it immediately.
+
+### 75. `_unrecorded_attributes` Does Not Deduplicate State Writes
+
+Home Assistant decides whether a write fires `state_changed` by comparing the state and the
+**complete** attribute dict with the previous write (`same_state and same_attr` in
+`homeassistant/core.py`). `_unrecorded_attributes` is applied later and only filters what the
+recorder stores in the attribute JSON. An attribute that changes on every coordinator cycle
+therefore still causes one `state_changed` event, one `states` row and one frontend push per
+entity per cycle, even when it is excluded from recording.
+
+**Verification Method:**
+```python
+# Two coordinator updates without a device change must not fire state_changed
+# (tests/test_state_write_dedup.py::test_no_second_state_changed_without_change)
+```
+
+**Rule of Thumb**: Never expose values derived from `monotonic_time_coarse()` (ages, countdowns)
+as entity attributes. Publish only values that change when the underlying state changes; keep
+continuously changing values in diagnostics or `dump_devices`.
