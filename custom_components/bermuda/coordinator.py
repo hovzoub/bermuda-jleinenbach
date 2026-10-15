@@ -141,6 +141,11 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
 
     """
 
+    # Per-cycle cache for count_active_scanners(), keyed by max_age.
+    # None outside an update cycle (class default also covers instances
+    # created without __init__, e.g. in tests).
+    _cycle_active_scanners: dict[float, int] | None = None
+
     def __init__(
         self,
         hass: HomeAssistant,
@@ -168,6 +173,7 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         self.metadevice_manager = MetadeviceManager(self)
 
         self.update_in_progress: bool = False  # A lock to guard against huge backlogs / slow processing
+        self._cycle_active_scanners = None
         self.stamp_last_update: float = 0  # Last time we ran an update, from monotonic_time_coarse()
         self.stamp_last_update_started: float = 0
         self.stamp_last_prune: float = 0  # When we last pruned device list
@@ -1307,19 +1313,25 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         return fresh_count
 
     def count_active_scanners(self, max_age: float = 10) -> int:
-        """Returns count of scanners that have recently sent updates."""
+        """
+        Returns count of scanners that have recently sent updates.
+
+        During the per-device loop of an update cycle the result is computed
+        once per max_age and reused: calculate_data() asks for it for every
+        stale device, which would otherwise iterate all scanners hundreds of
+        times per cycle. Outside that loop the value is always computed fresh.
+        """
+        cache = self._cycle_active_scanners
+        if cache is None:
+            return self._count_active_scanners_uncached(max_age)
+        if max_age not in cache:
+            cache[max_age] = self._count_active_scanners_uncached(max_age)
+        return cache[max_age]
+
+    def _count_active_scanners_uncached(self, max_age: float) -> int:
+        """Count scanners whose last advertisement is newer than max_age seconds."""
         stamp = monotonic_time_coarse() - max_age  # seconds
-        fresh_count = 0
-        for scanner in self.get_active_scanner_summary():
-            last_stamp = scanner.get("last_stamp", 0)
-            if isinstance(last_stamp, str):
-                try:
-                    last_stamp = float(last_stamp)
-                except ValueError:
-                    last_stamp = 0.0
-            if float(last_stamp) > stamp:
-                fresh_count += 1
-        return fresh_count
+        return sum(1 for scannerdev in self.get_scanners if scannerdev.last_seen > stamp)
 
     def get_active_scanner_summary(self) -> list[dict[str, float | str]]:
         """
@@ -1428,9 +1440,12 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
             #
             # Scanner entries have been loaded up with latest data, now we can
             # process data for all devices over all scanners.
+            # Stale devices ask for the active scanner count; compute it once.
+            self._cycle_active_scanners = {}
             for device in self.devices.values():
                 # Recalculate smoothed distances, last_seen etc
                 device.calculate_data()
+            self._cycle_active_scanners = None
 
             # Update scanner auto-calibration based on cross-visibility
             update_scanner_calibration(
@@ -1490,6 +1505,7 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
 
         finally:
             # end of async update
+            self._cycle_active_scanners = None
             self.update_in_progress = False
 
         self.stamp_last_update_started = nowstamp

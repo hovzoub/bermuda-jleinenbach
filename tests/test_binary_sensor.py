@@ -98,22 +98,23 @@ class TestBermudaScannerOnlineSensor:
         sensor = _make_scanner_sensor(last_seen=970.0)
         assert sensor.is_on is False
 
-    def test_extra_state_attributes_never_seen(self) -> None:
+    def test_extra_state_attributes_never_seen_has_no_age(self) -> None:
         """Test attributes when scanner never seen."""
         sensor = _make_scanner_sensor(last_seen=0.0)
         attrs = sensor.extra_state_attributes
         assert attrs is not None
-        assert attrs["last_seen_age_seconds"] is None
+        assert "last_seen_age_seconds" not in attrs
         assert attrs["timeout_seconds"] == SCANNER_ACTIVITY_TIMEOUT
 
     @patch("custom_components.bermuda.binary_sensor.monotonic_time_coarse")
-    def test_extra_state_attributes_with_data(self, mock_time: MagicMock) -> None:
+    def test_extra_state_attributes_with_data_has_no_age(self, mock_time: MagicMock) -> None:
         """Test attributes with actual scanner data."""
         mock_time.return_value = 1000.0
         sensor = _make_scanner_sensor(last_seen=990.0)
         attrs = sensor.extra_state_attributes
         assert attrs is not None
-        assert attrs["last_seen_age_seconds"] == 10.0
+        # The age changes every cycle; exposing it would force a state_changed per cycle.
+        assert "last_seen_age_seconds" not in attrs
         assert attrs["timeout_seconds"] == SCANNER_ACTIVITY_TIMEOUT
 
 

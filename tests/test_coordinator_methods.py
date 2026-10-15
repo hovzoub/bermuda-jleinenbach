@@ -848,3 +848,58 @@ class TestPruneDevicesAdditional:
 
         # Source should still exist (protected by metadevice)
         assert "aa:bb:cc:dd:ee:ff" in coordinator.devices
+
+
+class TestActiveScannerCycleCache:
+    """count_active_scanners() caches only inside an update cycle."""
+
+    def _isolated_cycle(self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) -> BermudaDataUpdateCoordinator:
+        import custom_components.bermuda.coordinator as coord_mod
+
+        coordinator = _make_coordinator(hass)
+        for name in (
+            "_async_gather_advert_data",
+            "update_metadevices",
+            "_refresh_areas_by_min_distance",
+            "aggregate_source_data_to_metadevices",
+            "prune_devices",
+        ):
+            monkeypatch.setattr(coordinator, name, MagicMock(return_value=True))
+        monkeypatch.setattr(coord_mod, "update_scanner_calibration", MagicMock())
+        coordinator.scanner_calibration = MagicMock()
+        return coordinator
+
+    def test_cache_cleared_when_cycle_raises(self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An exception during calculate_data() must not leave a stale cache behind."""
+        coordinator = self._isolated_cycle(hass, monkeypatch)
+        device = coordinator._get_or_create_device("AA:BB:CC:DD:EE:FF")
+        monkeypatch.setattr(device, "calculate_data", MagicMock(side_effect=RuntimeError("boom")))
+
+        with pytest.raises(RuntimeError):
+            coordinator._async_update_data_internal()
+
+        assert coordinator._cycle_active_scanners is None
+        assert coordinator.update_in_progress is False
+
+    def test_cache_cleared_after_normal_cycle(self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) -> None:
+        """After a completed cycle, callers outside the cycle get fresh values again."""
+        coordinator = self._isolated_cycle(hass, monkeypatch)
+        coordinator._get_or_create_device("AA:BB:CC:DD:EE:FF")
+
+        assert coordinator._async_update_data_internal() is True
+        assert coordinator._cycle_active_scanners is None
+
+    def test_cache_keyed_by_max_age(self, hass: HomeAssistant) -> None:
+        """Different max_age values inside one cycle are cached independently."""
+        coordinator = _make_coordinator(hass)
+        scanner = coordinator._get_or_create_device("11:22:33:44:55:66")
+        coordinator._scanners.add(scanner)
+        with patch("custom_components.bermuda.coordinator.monotonic_time_coarse", return_value=1000.0):
+            scanner.last_seen = 995.0
+            coordinator._cycle_active_scanners = {}
+            assert coordinator.count_active_scanners(10) == 1
+            assert coordinator.count_active_scanners(2) == 0
+            scanner.last_seen = 0.0
+            assert coordinator.count_active_scanners(10) == 1  # cached within the cycle
+            coordinator._cycle_active_scanners = None
+            assert coordinator.count_active_scanners(10) == 0  # fresh outside the cycle
