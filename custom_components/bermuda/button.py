@@ -89,6 +89,7 @@ class BermudaTrainingButton(BermudaEntity, ButtonEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "training_learn"
     _attr_entity_category = EntityCategory.CONFIG
+    _attr_entity_registry_visible_default = False
 
     # Icons for different states
     ICON_IDLE = "mdi:brain"
@@ -467,6 +468,7 @@ class BermudaResetTrainingButton(BermudaEntity, ButtonEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "reset_training"
     _attr_entity_category = EntityCategory.CONFIG
+    _attr_entity_registry_visible_default = False
     _attr_icon = "mdi:eraser"
 
     def __init__(

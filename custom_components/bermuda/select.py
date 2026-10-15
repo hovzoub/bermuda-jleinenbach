@@ -71,6 +71,7 @@ class BermudaTrainingRoomSelect(BermudaEntity, SelectEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "training_room"
     _attr_entity_category = EntityCategory.CONFIG
+    _attr_entity_registry_visible_default = False
     _attr_icon = "mdi:map-marker-radius"
 
     def __init__(
@@ -224,6 +225,7 @@ class BermudaTrainingFloorSelect(BermudaEntity, SelectEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "training_floor"
     _attr_entity_category = EntityCategory.CONFIG
+    _attr_entity_registry_visible_default = False
     _attr_icon = "mdi:floor-plan"
 
     def __init__(
