@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 
 from custom_components.bermuda.coordinator import BermudaDataUpdateCoordinator
 
+if TYPE_CHECKING:
+    from homeassistant.core import Event
+    from homeassistant.helpers.device_registry import EventDeviceRegistryUpdatedData
 
-def test_handle_devreg_malformed_identifier():
+
+def test_handle_devreg_malformed_identifier() -> None:
     """A malformed device identifier must not crash the devreg handler.
 
     Regression test: Home Assistant device identifiers are expected to be
@@ -44,7 +49,10 @@ def test_handle_devreg_malformed_identifier():
     event = SimpleNamespace(data={"action": "update", "device_id": "malformed-device", "changes": {}})
 
     # Previously raised ValueError: too many values to unpack (expected 2).
-    BermudaDataUpdateCoordinator.handle_devreg_changes(coordinator, event)
+    BermudaDataUpdateCoordinator.handle_devreg_changes(
+        cast("BermudaDataUpdateCoordinator", coordinator),
+        cast("Event[EventDeviceRegistryUpdatedData]", event),
+    )
 
     # Reached the end of the identifier branch without raising.
     assert coordinator._scanner_init_pending is True
