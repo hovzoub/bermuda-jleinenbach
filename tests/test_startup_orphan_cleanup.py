@@ -221,6 +221,35 @@ async def test_cleanup_keeps_live_prefix_of_scanner_duplicates(hass: HomeAssista
     assert sorted(removed) == sorted([entities[0], entities[2]])
 
 
+async def test_cleanup_keeps_entities_under_device_unique_id(hass: HomeAssistant) -> None:
+    """A device whose unique_id differs from its devices key and has no WiFi MAC keeps its entities."""
+    registry_mac = "12:34:56:78:9a:bc"
+    coordinator, _, removed = _setup(hass, [("sensor", registry_mac), ("sensor", f"{registry_mac}_range")])
+    coordinator._get_or_create_device(SCANNER_BLE).unique_id = registry_mac
+
+    await _cleanup(hass, coordinator)
+
+    assert removed == []
+
+
+async def test_cleanup_keeps_exact_case_live_entity_among_duplicates(hass: HomeAssistant) -> None:
+    """A stale copy that differs from the live unique_id only in case is the one removed."""
+    coordinator, entities, removed = _setup(
+        hass,
+        [
+            # Stale upper-case copy first, so registry order alone would keep it.
+            ("sensor", f"{MAC.upper()}_floor"),
+            ("sensor", f"{MAC}_floor"),
+        ],
+    )
+    coordinator._get_or_create_device(MAC)
+    _attach_to_one_device(hass, coordinator)
+
+    await _cleanup(hass, coordinator)
+
+    assert removed == [entities[0]]
+
+
 async def test_cleanup_keeps_global_entities(hass: HomeAssistant) -> None:
     """The global sensors share one device but are distinct entities."""
     coordinator, _, removed = _setup(

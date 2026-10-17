@@ -670,11 +670,11 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         Matches the longest known address that is the whole unique_id or its
         "<address>_" prefix. This works for addresses containing underscores
         (iBeacon "<uuid>_<major>_<minor>") and for any entity suffix. Entities
-        are created with BermudaDevice.unique_id, which for a scanner is its WiFi
-        MAC, so that and the WiFi MAC are matched too. The matched prefix can
-        therefore differ from the devices key: a scanner that is also a tracked
-        device is keyed by its BLE MAC in devices, while its unique_ids start
-        with its WiFi MAC.
+        are created with BermudaDevice.unique_id, so it is matched as well as the
+        WiFi MAC. For a scanner, unique_id is the MAC from the device registry
+        (usually the WiFi MAC), so the matched prefix can differ from the devices
+        key: a scanner that is also a tracked device is keyed by its BLE MAC in
+        devices, while its unique_ids start with its WiFi MAC.
         """
         uid = unique_id.lower()
         best: tuple[str, str] | None = None
@@ -735,12 +735,16 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         return ent_type
 
     def _prefix_rank(self, unique_id: str | None) -> tuple[bool, bool]:
-        """Return (has the live unique_id prefix, has a known address prefix) for duplicate ranking."""
+        """
+        Return (has the live unique_id prefix, has a known address prefix) for duplicate ranking.
+
+        The live prefix is compared exactly, without case folding: new entities are created
+        with BermudaDevice.unique_id as is, so a copy that differs only in case is stale.
+        """
         if not unique_id or (match := self._match_known_unique_id_prefix(unique_id)) is None:
             return (False, False)
-        address, prefix = match
-        live = (self.devices[address].unique_id or address).lower()
-        return (prefix == live, True)
+        live = self.devices[match[0]].unique_id or match[0]
+        return (unique_id == live or unique_id.startswith(live + "_"), True)
 
     def _find_duplicate_entities(
         self,
