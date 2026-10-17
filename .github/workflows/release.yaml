@@ -6,8 +6,7 @@ name: Release
 # Three entry points:
 # - release (published): build, sign and upload bermuda.zip to the release.
 # - workflow_dispatch:   dry run; build, verify and sign, never upload to a
-#                        release. Optional upload into a *draft* release
-#                        (upload_draft) with a throwaway tag.
+#                        release.
 # - pull_request:        dry run whenever this workflow file changes.
 
 on:
@@ -20,11 +19,6 @@ on:
         required: false
         default: "0.0.0-dryrun"
         type: string
-      upload_draft:
-        description: "Also upload the package into a draft release (never published)"
-        required: false
-        default: false
-        type: boolean
   pull_request:
     paths:
       - ".github/workflows/release.yaml"
@@ -49,13 +43,13 @@ jobs:
         id: version
         shell: bash
         env:
-          VERSION_IN: ${{ github.event.release.tag_name || inputs.version || '0.0.0-dryrun' }}
+          VERSION_IN: ${{ github.event.release.tag_name }}
         run: |
           version="${VERSION_IN}"
           version="${version,,}"
           version="${version#v}"
           if [[ ! "${version}" =~ ^[0-9a-z][0-9a-z.+-]*$ ]]; then
-            echo "::error::Invalid version: ${version}"
+            echo "::error::Invalid version format"
             exit 1
           fi
           # update const.py
@@ -106,7 +100,7 @@ jobs:
           version="${version,,}"
           version="${version#v}"
           if [[ ! "${version}" =~ ^[0-9a-z][0-9a-z.+-]*$ ]]; then
-            echo "::error::Invalid version: ${version}"
+            echo "::error::Invalid version format"
             exit 1
           fi
           # update const.py
@@ -150,48 +144,3 @@ jobs:
         run: |
           ls -l "${{ env.BERMUDA_ROOT_DIR }}"/bermuda.zip*
           test -s "${{ env.BERMUDA_ROOT_DIR }}/bermuda.zip.sigstore.json"
-
-  release_draft_probe:
-    name: Upload dry-run package into a draft release
-    needs: release_dry_run
-    if: github.event_name == 'workflow_dispatch' && inputs.upload_draft
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      BERMUDA_ROOT_DIR: "${{ github.workspace }}/custom_components/bermuda"
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set release version number in files
-        shell: bash
-        env:
-          VERSION_IN: ${{ inputs.version || '0.0.0-dryrun' }}
-        run: |
-          version="${VERSION_IN}"
-          version="${version,,}"
-          version="${version#v}"
-          if [[ ! "${version}" =~ ^[0-9a-z][0-9a-z.+-]*$ ]]; then
-            echo "::error::Invalid version: ${version}"
-            exit 1
-          fi
-          sed -i \
-            "/^VERSION.*=./c\VERSION = \"${version}\"" \
-            "${{ env.BERMUDA_ROOT_DIR }}/const.py"
-          jq ".version = \"${version}\"" "${{ env.BERMUDA_ROOT_DIR }}/manifest.json" > "${{ env.BERMUDA_ROOT_DIR }}/manifest.json.tmp"
-          mv "${{ env.BERMUDA_ROOT_DIR }}/manifest.json.tmp" "${{ env.BERMUDA_ROOT_DIR }}/manifest.json"
-
-      - name: Zip the integration directory
-        run: |
-          cd "${{ env.BERMUDA_ROOT_DIR }}"
-          zip bermuda.zip -r ./
-
-      - name: "Upload the ZIP file to a draft release (never publish)"
-        # Never reuse the tag of an existing release: that would overwrite its asset.
-        uses: softprops/action-gh-release@v3.0.2
-        with:
-          draft: true
-          tag_name: release-probe-${{ github.run_id }}
-          name: "CI release probe (draft, never publish)"
-          files: ${{ env.BERMUDA_ROOT_DIR }}/bermuda.zip
