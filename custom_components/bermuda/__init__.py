@@ -23,6 +23,8 @@ from .coordinator import BermudaDataUpdateCoordinator
 from .util import mac_math_offset, normalize_address
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.device_registry import DeviceEntry
@@ -77,7 +79,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BermudaConfigEntry) -> b
     # Bluetooth ID data loads, and devices only appear as their adverts arrive.
     # Handles cases where devices were re-discovered with different address formats
     # (e.g., FMDN device_id vs canonical_id changes) or entities weren't properly removed.
-    async def _async_cleanup_orphaned_entities(_now) -> None:
+    async def _async_cleanup_orphaned_entities(_now: datetime) -> None:
         await coordinator.async_cleanup_orphaned_entities()
 
     entry.async_on_unload(async_call_later(hass, ORPHAN_CLEANUP_DELAY, _async_cleanup_orphaned_entities))

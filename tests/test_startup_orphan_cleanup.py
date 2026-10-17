@@ -20,6 +20,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -273,6 +274,39 @@ async def test_cleanup_keeps_disabled_live_entity_over_enabled_stale_copy(hass: 
     assert removed == [entities[0]]
 
 
+async def test_cleanup_keeps_ibeacon_on_tracked_scanner_device(hass: HomeAssistant) -> None:
+    """
+    An iBeacon sent by a scanner shares that scanner's HA device; with the scanner tracked, both are live.
+
+    Their entities have equal remainders after the prefix ("", "_range", the per-scanner
+    sensors), so they share duplicate keys. Entities under a live prefix are never duplicates
+    of each other: none of the eight may be removed.
+    """
+    other_scanner = "6c:c8:40:86:7b:a6"
+    coordinator, _, removed = _setup(
+        hass,
+        [
+            ("device_tracker", SCANNER_WIFI),
+            ("sensor", SCANNER_WIFI),
+            ("sensor", f"{SCANNER_WIFI}_range"),
+            ("sensor", f"{SCANNER_WIFI}_{other_scanner}_range"),
+            ("device_tracker", IBEACON),
+            ("sensor", IBEACON),
+            ("sensor", f"{IBEACON}_range"),
+            ("sensor", f"{IBEACON}_{other_scanner}_range"),
+        ],
+    )
+    scanner = coordinator._get_or_create_device(SCANNER_BLE)
+    scanner.address_wifi_mac = SCANNER_WIFI
+    scanner.unique_id = SCANNER_WIFI
+    coordinator._get_or_create_device(IBEACON)
+    _attach_to_one_device(hass, coordinator)
+
+    await _cleanup(hass, coordinator)
+
+    assert removed == []
+
+
 async def test_cleanup_keeps_entities_under_device_unique_id(hass: HomeAssistant) -> None:
     """A device whose unique_id differs from its devices key and has no WiFi MAC keeps its entities."""
     registry_mac = "12:34:56:78:9a:bc"
@@ -335,8 +369,6 @@ async def test_cleanup_removes_old_address_format_duplicate(hass: HomeAssistant)
 
 def _attach_to_one_device(hass: HomeAssistant, coordinator) -> None:
     """Put all of the entry's entities on one HA device, as the platforms do."""
-    from homeassistant.helpers import device_registry as dr
-
     device = dr.async_get(hass).async_get_or_create(
         config_entry_id=coordinator.config_entry.entry_id, identifiers={(DOMAIN, "shared")}
     )
