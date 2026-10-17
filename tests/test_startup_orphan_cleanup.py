@@ -136,6 +136,32 @@ async def test_setup_defers_cleanup(hass: HomeAssistant) -> None:
     assert call_later.call_args.args[1] == getattr(bermuda_init, "ORPHAN_CLEANUP_DELAY", None)
 
 
+async def test_deferred_cleanup_runs_orphan_cleanup(hass: HomeAssistant) -> None:
+    """The callback scheduled by setup runs the orphan cleanup when the delay has passed."""
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options={})
+    entry.add_to_hass(hass)
+    calls: list[None] = []
+
+    async def _record(*_args, **_kwargs) -> None:
+        calls.append(None)
+
+    with (
+        patch("custom_components.bermuda.BermudaDataUpdateCoordinator") as coordinator_cls,
+        patch("custom_components.bermuda.async_call_later", create=True) as call_later,
+        patch.object(hass.config_entries, "async_forward_entry_setups"),
+    ):
+        coordinator = coordinator_cls.return_value
+        coordinator.async_cleanup_device_registry_connections = _noop
+        coordinator.async_refresh = _noop
+        coordinator.last_update_success = True
+        coordinator.async_cleanup_orphaned_entities = _record
+        await bermuda_init.async_setup_entry(hass, entry)
+        assert calls == []
+        await call_later.call_args.args[2](None)
+
+    assert calls == [None]
+
+
 async def _noop(*_args, **_kwargs) -> None:
     return None
 
@@ -219,6 +245,32 @@ async def test_cleanup_keeps_live_prefix_of_scanner_duplicates(hass: HomeAssista
     await _cleanup(hass, coordinator)
 
     assert sorted(removed) == sorted([entities[0], entities[2]])
+
+
+async def test_cleanup_keeps_disabled_live_entity_over_enabled_stale_copy(hass: HomeAssistant) -> None:
+    """
+    The live prefix outranks the enabled state among duplicates.
+
+    A scanner moved from its BLE to its WiFi prefix: the user had enabled the old diagnostic
+    entity, the new one is disabled by default. The stale copy only shows unavailable, and
+    the live unique_id is the one the platforms create, so the stale copy is removed.
+    """
+    coordinator, entities, removed = _setup(
+        hass,
+        [
+            ("sensor", f"{SCANNER_BLE}_estimated_broadcast_interval"),
+            ("sensor", f"{SCANNER_WIFI}_estimated_broadcast_interval"),
+        ],
+    )
+    er.async_get(hass).async_update_entity(entities[1], disabled_by=er.RegistryEntryDisabler.INTEGRATION)
+    scanner = coordinator._get_or_create_device(SCANNER_BLE)
+    scanner.address_wifi_mac = SCANNER_WIFI
+    scanner.unique_id = SCANNER_WIFI
+    _attach_to_one_device(hass, coordinator)
+
+    await _cleanup(hass, coordinator)
+
+    assert removed == [entities[0]]
 
 
 async def test_cleanup_keeps_entities_under_device_unique_id(hass: HomeAssistant) -> None:

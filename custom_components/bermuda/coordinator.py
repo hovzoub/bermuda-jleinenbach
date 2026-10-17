@@ -763,11 +763,13 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
             if len(type_entities) <= 1:
                 continue
 
-            # Sort: enabled first, then prefer entities under the prefix new entities are
-            # created with (BermudaDevice.unique_id), then any known address prefix.
+            # Sort: prefer entities under the prefix new entities are created with
+            # (BermudaDevice.unique_id), then any known address prefix, then enabled ones.
+            # The live prefix comes before the enabled state: a stale copy the user had
+            # enabled only shows unavailable, while the live unique_id is recreated anyway.
             sorted_entities = sorted(
                 type_entities,
-                key=lambda e: (e.disabled_by is None, *self._prefix_rank(e.unique_id)),
+                key=lambda e: (*self._prefix_rank(e.unique_id), e.disabled_by is None),
                 reverse=True,
             )
 
