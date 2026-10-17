@@ -773,9 +773,10 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
                 reverse=True,
             )
 
-            # Keep the first (best) one, mark others for removal. An entity under a live
-            # prefix is never a duplicate: two live devices can share one HA device (an
-            # iBeacon sent by a tracked scanner), and their unique_ids differ only in the prefix.
+            # Keep the first (best) one, mark others for removal. An entity under the live
+            # prefix of a device Bermuda currently knows is never a duplicate: two such devices
+            # can share one HA device (an iBeacon sent by a tracked scanner), and their
+            # unique_ids differ only in the prefix.
             for entity in sorted_entities[1:]:
                 if self._prefix_rank(entity.unique_id)[0]:
                     continue
