@@ -192,6 +192,35 @@ async def test_cleanup_keeps_entities_of_scanner_tracked_as_device(hass: HomeAss
     assert removed == []
 
 
+async def test_cleanup_keeps_live_prefix_of_scanner_duplicates(hass: HomeAssistant) -> None:
+    """
+    Real duplicates under the BLE and the WiFi prefix: the entity with the live prefix stays.
+
+    Entities are created with BermudaDevice.unique_id, which is the WiFi MAC for such a
+    scanner. Leftovers under the BLE MAC are the stale copies, even though the BLE MAC is
+    the devices key.
+    """
+    other_scanner = "6c:c8:40:86:7b:a6"
+    coordinator, entities, removed = _setup(
+        hass,
+        [
+            # Stale copies first, so registry order alone would keep them.
+            ("sensor", f"{SCANNER_BLE}_estimated_broadcast_interval"),
+            ("sensor", f"{SCANNER_WIFI}_estimated_broadcast_interval"),
+            ("sensor", f"{SCANNER_BLE}_{other_scanner}_range"),
+            ("sensor", f"{SCANNER_WIFI}_{other_scanner}_range"),
+        ],
+    )
+    scanner = coordinator._get_or_create_device(SCANNER_BLE)
+    scanner.address_wifi_mac = SCANNER_WIFI
+    scanner.unique_id = SCANNER_WIFI
+    _attach_to_one_device(hass, coordinator)
+
+    await _cleanup(hass, coordinator)
+
+    assert sorted(removed) == sorted([entities[0], entities[2]])
+
+
 async def test_cleanup_keeps_global_entities(hass: HomeAssistant) -> None:
     """The global sensors share one device but are distinct entities."""
     coordinator, _, removed = _setup(

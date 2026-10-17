@@ -669,16 +669,17 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
 
         Matches the longest known address that is the whole unique_id or its
         "<address>_" prefix. This works for addresses containing underscores
-        (iBeacon "<uuid>_<major>_<minor>") and for any entity suffix. Scanner
-        entities are keyed by the scanner's WiFi MAC, so that is matched too.
-        The matched prefix can therefore differ from the devices key: a scanner
-        that is also a tracked device is keyed by its BLE MAC in devices, while
-        its unique_ids start with its WiFi MAC.
+        (iBeacon "<uuid>_<major>_<minor>") and for any entity suffix. Entities
+        are created with BermudaDevice.unique_id, which for a scanner is its WiFi
+        MAC, so that and the WiFi MAC are matched too. The matched prefix can
+        therefore differ from the devices key: a scanner that is also a tracked
+        device is keyed by its BLE MAC in devices, while its unique_ids start
+        with its WiFi MAC.
         """
         uid = unique_id.lower()
         best: tuple[str, str] | None = None
         for address, device in self.devices.items():
-            for candidate in (address, getattr(device, "address_wifi_mac", None)):
+            for candidate in (address, getattr(device, "address_wifi_mac", None), getattr(device, "unique_id", None)):
                 if not candidate:
                     continue
                 cand = candidate.lower()
@@ -712,7 +713,7 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
 
     def _get_entity_type_key(self, entity: er.RegistryEntry) -> str:
         """
-        Get a stable key for entity type: platform plus the unique_id after the base address.
+        Get a stable key for entity type: platform plus the unique_id after the matched address prefix.
 
         The remainder keeps the scanner address of per-scanner entities
         ("<device>_<scanner>_range"), so one device's distance sensors for
@@ -733,6 +734,14 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
                     break
         return ent_type
 
+    def _prefix_rank(self, unique_id: str | None) -> tuple[bool, bool]:
+        """Return (has the live unique_id prefix, has a known address prefix) for duplicate ranking."""
+        if not unique_id or (match := self._match_known_unique_id_prefix(unique_id)) is None:
+            return (False, False)
+        address, prefix = match
+        live = (self.devices[address].unique_id or address).lower()
+        return (prefix == live, True)
+
     def _find_duplicate_entities(
         self,
         entities: list[er.RegistryEntry],
@@ -750,15 +759,11 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
             if len(type_entities) <= 1:
                 continue
 
-            # Sort: enabled first, then prefer entities whose address exists in devices
+            # Sort: enabled first, then prefer entities under the prefix new entities are
+            # created with (BermudaDevice.unique_id), then any known address prefix.
             sorted_entities = sorted(
                 type_entities,
-                key=lambda e: (
-                    e.disabled_by is None,
-                    any(e.unique_id and e.unique_id.startswith(addr) for addr in self.devices)
-                    if e.unique_id
-                    else False,
-                ),
+                key=lambda e: (e.disabled_by is None, *self._prefix_rank(e.unique_id)),
                 reverse=True,
             )
 
