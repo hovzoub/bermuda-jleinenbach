@@ -164,6 +164,34 @@ async def test_cleanup_keeps_per_scanner_entities_of_one_device(hass: HomeAssist
     assert removed == []
 
 
+async def test_cleanup_keeps_entities_of_scanner_tracked_as_device(hass: HomeAssistant) -> None:
+    """
+    A scanner that is also a tracked device: devices is keyed by its BLE MAC, its unique_ids use the WiFi MAC.
+
+    The duplicate key must come from the prefix that matched (the WiFi MAC), not from the
+    devices key, or the per-scanner sensors of one kind share a key and are removed as duplicates.
+    """
+    other_scanner = "6c:c8:40:86:7b:a6"
+    coordinator, _, removed = _setup(
+        hass,
+        [
+            ("sensor", SCANNER_WIFI),
+            ("sensor", f"{SCANNER_WIFI}_range"),
+            ("sensor", f"{SCANNER_WIFI}_{other_scanner}_range"),
+            ("sensor", f"{SCANNER_WIFI}_{MAC}_range"),
+            ("sensor", f"{SCANNER_WIFI}_{other_scanner}_range_raw"),
+            ("sensor", f"{SCANNER_WIFI}_{MAC}_range_raw"),
+            ("sensor", f"{SCANNER_WIFI}_estimated_broadcast_interval"),
+        ],
+    )
+    coordinator._get_or_create_device(SCANNER_BLE).address_wifi_mac = SCANNER_WIFI
+    _attach_to_one_device(hass, coordinator)
+
+    await _cleanup(hass, coordinator)
+
+    assert removed == []
+
+
 async def test_cleanup_keeps_global_entities(hass: HomeAssistant) -> None:
     """The global sensors share one device but are distinct entities."""
     coordinator, _, removed = _setup(

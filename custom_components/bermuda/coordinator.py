@@ -663,25 +663,33 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         "_rssi",
     ]
 
-    def _known_address_for_unique_id(self, unique_id: str) -> str | None:
+    def _match_known_unique_id_prefix(self, unique_id: str) -> tuple[str, str] | None:
         """
-        Return the coordinator.devices key that a unique_id belongs to, if any.
+        Return (devices key, matched prefix) for the device a unique_id belongs to, if any.
 
         Matches the longest known address that is the whole unique_id or its
         "<address>_" prefix. This works for addresses containing underscores
         (iBeacon "<uuid>_<major>_<minor>") and for any entity suffix. Scanner
         entities are keyed by the scanner's WiFi MAC, so that is matched too.
+        The matched prefix can therefore differ from the devices key: a scanner
+        that is also a tracked device is keyed by its BLE MAC in devices, while
+        its unique_ids start with its WiFi MAC.
         """
         uid = unique_id.lower()
-        best: tuple[int, str] | None = None
+        best: tuple[str, str] | None = None
         for address, device in self.devices.items():
             for candidate in (address, getattr(device, "address_wifi_mac", None)):
                 if not candidate:
                     continue
                 cand = candidate.lower()
-                if (uid == cand or uid.startswith(cand + "_")) and (best is None or len(cand) > best[0]):
-                    best = (len(cand), address)
-        return best[1] if best else None
+                if (uid == cand or uid.startswith(cand + "_")) and (best is None or len(cand) > len(best[1])):
+                    best = (address, cand)
+        return best
+
+    def _known_address_for_unique_id(self, unique_id: str) -> str | None:
+        """Return the coordinator.devices key that a unique_id belongs to, if any."""
+        match = self._match_known_unique_id_prefix(unique_id)
+        return match[0] if match else None
 
     def _extract_base_address_from_unique_id(self, unique_id: str) -> str:
         """Extract the base device address from an entity's unique_id."""
@@ -712,6 +720,10 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         """
         ent_type = entity.domain
         if entity.unique_id:
+            # Use the prefix that actually matched, not the devices key: for a scanner
+            # that is also a tracked device they differ (WiFi MAC vs BLE MAC).
+            if (match := self._match_known_unique_id_prefix(entity.unique_id)) is not None:
+                return f"{entity.domain}{entity.unique_id[len(match[1]) :]}"
             base = self._extract_base_address_from_unique_id(entity.unique_id)
             if base and entity.unique_id.lower().startswith(base.lower()):
                 return f"{entity.domain}{entity.unique_id[len(base) :]}"
