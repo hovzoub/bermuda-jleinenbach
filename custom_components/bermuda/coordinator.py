@@ -648,22 +648,54 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         return False
 
     # Known suffixes used in unique_id generation for entity type detection
+    # Longer suffixes first: "_training_floor" must not be cut as "_floor".
     _ENTITY_UNIQUE_ID_SUFFIXES = [
+        "_area_switch_reason",
+        "_area_last_seen",
+        "_training_learn",
+        "_reset_training",
+        "_training_floor",
+        "_training_room",
+        "_range_raw",
+        "_scanner",
         "_floor",
         "_range",
         "_rssi",
-        "_scanner",
-        "_area_last_seen",
-        "_area_switch_reason",
-        "_training_learn",
-        "_reset_training",
-        "_training_room",
-        "_training_floor",
-        "_range_raw",
     ]
+
+    def _match_known_unique_id_prefix(self, unique_id: str) -> tuple[str, str] | None:
+        """
+        Return (devices key, matched prefix) for the device a unique_id belongs to, if any.
+
+        Matches the longest known address that is the whole unique_id or its
+        "<address>_" prefix. This works for addresses containing underscores
+        (iBeacon "<uuid>_<major>_<minor>") and for any entity suffix. Entities
+        are created with BermudaDevice.unique_id, so it is matched as well as the
+        WiFi MAC. For a scanner, unique_id is the MAC from the device registry
+        (usually the WiFi MAC), so the matched prefix can differ from the devices
+        key: a scanner that is also a tracked device is keyed by its BLE MAC in
+        devices, while its unique_ids start with its WiFi MAC.
+        """
+        uid = unique_id.lower()
+        best: tuple[str, str] | None = None
+        for address, device in self.devices.items():
+            for candidate in (address, getattr(device, "address_wifi_mac", None), getattr(device, "unique_id", None)):
+                if not candidate:
+                    continue
+                cand = candidate.lower()
+                if (uid == cand or uid.startswith(cand + "_")) and (best is None or len(cand) > len(best[1])):
+                    best = (address, cand)
+        return best
+
+    def _known_address_for_unique_id(self, unique_id: str) -> str | None:
+        """Return the coordinator.devices key that a unique_id belongs to, if any."""
+        match = self._match_known_unique_id_prefix(unique_id)
+        return match[0] if match else None
 
     def _extract_base_address_from_unique_id(self, unique_id: str) -> str:
         """Extract the base device address from an entity's unique_id."""
+        if (known := self._known_address_for_unique_id(unique_id)) is not None:
+            return known
         base_address = unique_id
         for suffix in self._ENTITY_UNIQUE_ID_SUFFIXES:
             if base_address.endswith(suffix):
@@ -680,14 +712,39 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         return base_address
 
     def _get_entity_type_key(self, entity: er.RegistryEntry) -> str:
-        """Get a stable key for entity type based on platform and unique_id suffix."""
+        """
+        Get a stable key for entity type: platform plus the unique_id after the matched address prefix.
+
+        The remainder keeps the scanner address of per-scanner entities
+        ("<device>_<scanner>_range"), so one device's distance sensors for
+        different scanners are not mistaken for duplicates of each other.
+        """
         ent_type = entity.domain
         if entity.unique_id:
+            # Use the prefix that actually matched, not the devices key: for a scanner
+            # that is also a tracked device they differ (WiFi MAC vs BLE MAC).
+            if (match := self._match_known_unique_id_prefix(entity.unique_id)) is not None:
+                return f"{entity.domain}{entity.unique_id[len(match[1]) :]}"
+            base = self._extract_base_address_from_unique_id(entity.unique_id)
+            if base and entity.unique_id.lower().startswith(base.lower()):
+                return f"{entity.domain}{entity.unique_id[len(base) :]}"
             for suffix in self._ENTITY_UNIQUE_ID_SUFFIXES:
                 if entity.unique_id.endswith(suffix):
                     ent_type = f"{entity.domain}{suffix}"
                     break
         return ent_type
+
+    def _prefix_rank(self, unique_id: str | None) -> tuple[bool, bool]:
+        """
+        Return (has the live unique_id prefix, has a known address prefix) for duplicate ranking.
+
+        The live prefix is compared exactly, without case folding: new entities are created
+        with BermudaDevice.unique_id as is, so a copy that differs only in case is stale.
+        """
+        if not unique_id or (match := self._match_known_unique_id_prefix(unique_id)) is None:
+            return (False, False)
+        live = self.devices[match[0]].unique_id or match[0]
+        return (unique_id == live or unique_id.startswith(live + "_"), True)
 
     def _find_duplicate_entities(
         self,
@@ -706,20 +763,23 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
             if len(type_entities) <= 1:
                 continue
 
-            # Sort: enabled first, then prefer entities whose address exists in devices
+            # Sort: prefer entities under the prefix new entities are created with
+            # (BermudaDevice.unique_id), then any known address prefix, then enabled ones.
+            # The live prefix comes before the enabled state: a stale copy the user had
+            # enabled only shows unavailable, while the live unique_id is recreated anyway.
             sorted_entities = sorted(
                 type_entities,
-                key=lambda e: (
-                    e.disabled_by is None,
-                    any(e.unique_id and e.unique_id.startswith(addr) for addr in self.devices)
-                    if e.unique_id
-                    else False,
-                ),
+                key=lambda e: (*self._prefix_rank(e.unique_id), e.disabled_by is None),
                 reverse=True,
             )
 
-            # Keep the first (best) one, mark others for removal
+            # Keep the first (best) one, mark others for removal. An entity under the live
+            # prefix of a device Bermuda currently knows is never a duplicate: two such devices
+            # can share one HA device (an iBeacon sent by a tracked scanner), and their
+            # unique_ids differ only in the prefix.
             for entity in sorted_entities[1:]:
+                if self._prefix_rank(entity.unique_id)[0]:
+                    continue
                 duplicates_to_remove.append(entity.entity_id)
                 _LOGGER.debug(
                     "Marking duplicate entity for removal: %s (keeping %s)",
@@ -746,6 +806,16 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         if self.config_entry is None:
             return
 
+        # Without a populated device list every entity looks orphaned. While the
+        # Bluetooth ID data loads, _async_update_data() returns early and builds nothing.
+        if self._waitingfor_load_manufacturer_ids or not self.devices:
+            _LOGGER.debug(
+                "Skipping orphaned entity cleanup: device list not populated (loading=%s, devices=%d)",
+                self._waitingfor_load_manufacturer_ids,
+                len(self.devices),
+            )
+            return
+
         bermuda_entities = er.async_entries_for_config_entry(registry, self.config_entry.entry_id)
         if not bermuda_entities:
             return
@@ -761,7 +831,8 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
             base_address = self._extract_base_address_from_unique_id(entity.unique_id)
             entities_by_base_address.setdefault(base_address, []).append(entity)
 
-            if entity.device_id:
+            # Global sensors share one device but are distinct entities, never duplicates.
+            if entity.device_id and not base_address.startswith("BERMUDA_GLOBAL"):
                 entities_by_device_id.setdefault(entity.device_id, []).append(entity)
 
         # Find orphaned entities (address no longer exists)
