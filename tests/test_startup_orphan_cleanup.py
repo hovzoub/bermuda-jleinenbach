@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -26,6 +28,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 import custom_components.bermuda as bermuda_init
 from custom_components.bermuda.const import DOMAIN
+from custom_components.bermuda.coordinator import BermudaDataUpdateCoordinator
 
 from .test_coordinator_methods import _make_coordinator
 
@@ -375,3 +378,97 @@ def _attach_to_one_device(hass: HomeAssistant, coordinator) -> None:
     registry = er.async_get(hass)
     for entity in er.async_entries_for_config_entry(registry, coordinator.config_entry.entry_id):
         registry.async_update_entity(entity.entity_id, device_id=device.id)
+
+
+def _linear_reference(self: BermudaDataUpdateCoordinator, unique_id: str) -> tuple[str, str] | None:
+    """Reference: the linear prefix search the cleanup used before the per-run index."""
+    uid = unique_id.lower()
+    best: tuple[str, str] | None = None
+    for address, device in self.devices.items():
+        for candidate in (address, getattr(device, "address_wifi_mac", None), getattr(device, "unique_id", None)):
+            if not candidate:
+                continue
+            cand = candidate.lower()
+            if (uid == cand or uid.startswith(cand + "_")) and (best is None or len(cand) > len(best[1])):
+                best = (address, cand)
+    return best
+
+
+def _oracle_devices(coordinator: BermudaDataUpdateCoordinator) -> None:
+    """Devices for the prefix oracle; insertion order matters for the shared candidate."""
+    coordinator._get_or_create_device(IBEACON)
+    wifi = coordinator._get_or_create_device(SCANNER_BLE)
+    wifi.address_wifi_mac = SCANNER_WIFI
+    wifi.unique_id = SCANNER_WIFI
+    own_id = coordinator._get_or_create_device("12:34:56:78:9a:bc")
+    own_id.unique_id = "registry-id"
+    first = coordinator._get_or_create_device("02:00:00:00:00:01")
+    first.address_wifi_mac = "02:00:00:00:00:aa"
+    second = coordinator._get_or_create_device("02:00:00:00:00:02")
+    second.address_wifi_mac = "02:00:00:00:00:aa"
+    outer = coordinator._get_or_create_device("02:00:00:00:00:03")
+    outer.unique_id = "nest_a"
+    inner = coordinator._get_or_create_device("02:00:00:00:00:04")
+    inner.unique_id = "nest_a_b"
+    upper = coordinator._get_or_create_device("02:00:00:00:00:05")
+    upper.unique_id = "0A:BC:DE:F0:12:34"  # scanner source address, upper case
+    empty = coordinator._get_or_create_device("02:00:00:00:00:06")
+    empty.address_wifi_mac = ""
+    trailing = coordinator._get_or_create_device("02:00:00:00:00:07")
+    trailing.unique_id = "trail_"
+
+
+@pytest.mark.parametrize(
+    "unique_ids",
+    [
+        [f"{IBEACON}_range", f"{IBEACON}_{SCANNER_BLE}_range", f"{IBEACON}_training_floor"],
+        [f"{SCANNER_WIFI}_{MAC}_range", f"{SCANNER_BLE}_floor", f"{SCANNER_WIFI.upper()}_range"],
+        ["registry-id_range", "registry-id"],
+        ["02:00:00:00:00:aa_range", "02:00:00:00:00:aa"],
+        ["nest_a_b_floor", "nest_a_floor", "nest_a"],
+        ["0A:BC:DE:F0:12:34_range", "0a:bc:de:f0:12:34_range"],
+        [SCANNER_WIFI, "nest_a_b", "registry-id"],
+        ["_floor", "__range"],
+        ["trail__range", "trail_"],
+        ["ff:ff:ff:ff:ff:ff_range", "unknown", ""],
+    ],
+    ids=[
+        "ibeacon",
+        "wifi_ungleich_schluessel",
+        "unique_id_kandidat",
+        "geteilt",
+        "verschachtelt",
+        "gross",
+        "uid_gleich_kandidat",
+        "leer_fuehrend",
+        "unterstrich_am_ende",
+        "kein_treffer",
+    ],
+)
+async def test_prefix_match_equals_linear_reference(hass: HomeAssistant, unique_ids: list[str]) -> None:
+    """The prefix match of the cleanup resolves every unique_id exactly like the linear reference."""
+    coordinator = _make_coordinator(hass)
+    _oracle_devices(coordinator)
+
+    for unique_id in unique_ids:
+        assert coordinator._match_known_unique_id_prefix(unique_id) == _linear_reference(coordinator, unique_id), (
+            unique_id
+        )
+
+
+async def test_cleanup_keeps_live_entity_when_device_unique_id_is_none(hass: HomeAssistant) -> None:
+    """Without a unique_id the devices key is the live prefix: the copy differing in case goes."""
+    coordinator, entities, removed = _setup(
+        hass,
+        [
+            # Stale upper-case copy first, so registry order alone would keep it.
+            ("sensor", f"{MAC.upper()}_floor"),
+            ("sensor", f"{MAC}_floor"),
+        ],
+    )
+    coordinator._get_or_create_device(MAC).unique_id = None
+    _attach_to_one_device(hass, coordinator)
+
+    await _cleanup(hass, coordinator)
+
+    assert removed == [entities[0]]
