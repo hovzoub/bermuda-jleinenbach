@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       ha_version:
-        description: "Specific HA version to test (e.g., 2025.1.0)"
+        description: "Specific HA version to test (e.g., 2026.6.0)"
         required: false
         type: string
 

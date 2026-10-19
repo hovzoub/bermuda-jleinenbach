@@ -59,7 +59,7 @@
 - **Testing & local checks:** Add regression tests for fixes (under `tests/`); run `python -m ruff check --fix`, `python -m mypy --strict --install-types --non-interactive`, and `python -m pytest --cov -q` before committing.
 
 ## Environment prerequisites (typing/tests)
-- Install development dependencies with `python -m pip install -r requirements_dev.txt` so `homeassistant` and `pytest-homeassistant-custom-component` are available.
+- Install development dependencies with `python -m pip install -r requirements_dev.txt` so `homeassistant` and `pytest-homeassistant-custom-component` are available, then the pinned requirements of the Home Assistant integrations Bermuda loads with: `python scripts/ha_component_requirements.py | xargs -n1 python -m pip install` (without them, `serialx` and `aioesphomeapi` are missing and test collection fails).
 - Run mypy with `--install-types --non-interactive` if new stubs are needed; missing type stubs will otherwise cause failures.
 - Pytest relies on Home Assistant test helpers; ensure the packages from `requirements_test.txt` are present before running isolated tests.
 - When exercising optional integrations (e.g., googlefindmy), ensure their dependencies are installed locally or use the absence-safe code paths and associated tests so mypy/pytest do not fail when the provider is missing.
