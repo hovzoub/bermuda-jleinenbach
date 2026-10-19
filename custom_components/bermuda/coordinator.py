@@ -663,7 +663,23 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         "_rssi",
     ]
 
-    def _match_known_unique_id_prefix(self, unique_id: str) -> tuple[str, str] | None:
+    def _build_unique_id_prefix_index(self) -> dict[str, str]:
+        """
+        Map every known address candidate (lower case) to its devices key.
+
+        Candidates per device are the devices key, the WiFi MAC and BermudaDevice.unique_id.
+        setdefault keeps the first device for a shared candidate, as the linear search did.
+        """
+        index: dict[str, str] = {}
+        for address, device in self.devices.items():
+            for candidate in (address, getattr(device, "address_wifi_mac", None), getattr(device, "unique_id", None)):
+                if candidate:
+                    index.setdefault(candidate.lower(), address)
+        return index
+
+    def _match_known_unique_id_prefix(
+        self, unique_id: str, index: dict[str, str] | None = None
+    ) -> tuple[str, str] | None:
         """
         Return (devices key, matched prefix) for the device a unique_id belongs to, if any.
 
@@ -672,29 +688,34 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         (iBeacon "<uuid>_<major>_<minor>") and for any entity suffix. Entities
         are created with BermudaDevice.unique_id, so it is matched as well as the
         WiFi MAC. For a scanner, unique_id is the MAC from the device registry
-        (usually the WiFi MAC), so the matched prefix can differ from the devices
-        key: a scanner that is also a tracked device is keyed by its BLE MAC in
-        devices, while its unique_ids start with its WiFi MAC.
+        (usually the WiFi MAC), else its Bluetooth address from the registry, else
+        the scanner's source address. The matched prefix can therefore differ from
+        the devices key: a
+        scanner that is also a tracked device is keyed by its BLE MAC in devices,
+        while its unique_ids start with its WiFi MAC.
         """
+        if index is None:
+            index = self._build_unique_id_prefix_index()
         uid = unique_id.lower()
-        best: tuple[str, str] | None = None
-        for address, device in self.devices.items():
-            for candidate in (address, getattr(device, "address_wifi_mac", None), getattr(device, "unique_id", None)):
-                if not candidate:
-                    continue
-                cand = candidate.lower()
-                if (uid == cand or uid.startswith(cand + "_")) and (best is None or len(cand) > len(best[1])):
-                    best = (address, cand)
-        return best
+        if (address := index.get(uid)) is not None:
+            return (address, uid)
+        # Longest prefix first: try the part before each "_", from the right.
+        pos = uid.rfind("_")
+        while pos != -1:
+            prefix = uid[:pos]
+            if (address := index.get(prefix)) is not None:
+                return (address, prefix)
+            pos = uid.rfind("_", 0, pos)
+        return None
 
-    def _known_address_for_unique_id(self, unique_id: str) -> str | None:
+    def _known_address_for_unique_id(self, unique_id: str, index: dict[str, str] | None = None) -> str | None:
         """Return the coordinator.devices key that a unique_id belongs to, if any."""
-        match = self._match_known_unique_id_prefix(unique_id)
+        match = self._match_known_unique_id_prefix(unique_id, index)
         return match[0] if match else None
 
-    def _extract_base_address_from_unique_id(self, unique_id: str) -> str:
+    def _extract_base_address_from_unique_id(self, unique_id: str, index: dict[str, str] | None = None) -> str:
         """Extract the base device address from an entity's unique_id."""
-        if (known := self._known_address_for_unique_id(unique_id)) is not None:
+        if (known := self._known_address_for_unique_id(unique_id, index)) is not None:
             return known
         base_address = unique_id
         for suffix in self._ENTITY_UNIQUE_ID_SUFFIXES:
@@ -711,7 +732,7 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
 
         return base_address
 
-    def _get_entity_type_key(self, entity: er.RegistryEntry) -> str:
+    def _get_entity_type_key(self, entity: er.RegistryEntry, index: dict[str, str] | None = None) -> str:
         """
         Get a stable key for entity type: platform plus the unique_id after the matched address prefix.
 
@@ -723,9 +744,9 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         if entity.unique_id:
             # Use the prefix that actually matched, not the devices key: for a scanner
             # that is also a tracked device they differ (WiFi MAC vs BLE MAC).
-            if (match := self._match_known_unique_id_prefix(entity.unique_id)) is not None:
+            if (match := self._match_known_unique_id_prefix(entity.unique_id, index)) is not None:
                 return f"{entity.domain}{entity.unique_id[len(match[1]) :]}"
-            base = self._extract_base_address_from_unique_id(entity.unique_id)
+            base = self._extract_base_address_from_unique_id(entity.unique_id, index)
             if base and entity.unique_id.lower().startswith(base.lower()):
                 return f"{entity.domain}{entity.unique_id[len(base) :]}"
             for suffix in self._ENTITY_UNIQUE_ID_SUFFIXES:
@@ -734,14 +755,14 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
                     break
         return ent_type
 
-    def _prefix_rank(self, unique_id: str | None) -> tuple[bool, bool]:
+    def _prefix_rank(self, unique_id: str | None, index: dict[str, str] | None = None) -> tuple[bool, bool]:
         """
         Return (has the live unique_id prefix, has a known address prefix) for duplicate ranking.
 
         The live prefix is compared exactly, without case folding: new entities are created
         with BermudaDevice.unique_id as is, so a copy that differs only in case is stale.
         """
-        if not unique_id or (match := self._match_known_unique_id_prefix(unique_id)) is None:
+        if not unique_id or (match := self._match_known_unique_id_prefix(unique_id, index)) is None:
             return (False, False)
         live = self.devices[match[0]].unique_id or match[0]
         return (unique_id == live or unique_id.startswith(live + "_"), True)
@@ -749,14 +770,17 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
     def _find_duplicate_entities(
         self,
         entities: list[er.RegistryEntry],
+        index: dict[str, str] | None = None,
     ) -> list[str]:
         """Find duplicate entities for a device, returning entity_ids to remove."""
         duplicates_to_remove: list[str] = []
+        if index is None:
+            index = self._build_unique_id_prefix_index()
 
         # Group by entity type (platform + unique_id suffix)
         entities_by_type: dict[str, list[er.RegistryEntry]] = {}
         for entity in entities:
-            ent_type = self._get_entity_type_key(entity)
+            ent_type = self._get_entity_type_key(entity, index)
             entities_by_type.setdefault(ent_type, []).append(entity)
 
         for type_entities in entities_by_type.values():
@@ -769,7 +793,7 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
             # enabled only shows unavailable, while the live unique_id is recreated anyway.
             sorted_entities = sorted(
                 type_entities,
-                key=lambda e: (*self._prefix_rank(e.unique_id), e.disabled_by is None),
+                key=lambda e: (*self._prefix_rank(e.unique_id, index), e.disabled_by is None),
                 reverse=True,
             )
 
@@ -778,7 +802,7 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
             # can share one HA device (an iBeacon sent by a tracked scanner), and their
             # unique_ids differ only in the prefix.
             for entity in sorted_entities[1:]:
-                if self._prefix_rank(entity.unique_id)[0]:
+                if self._prefix_rank(entity.unique_id, index)[0]:
                     continue
                 duplicates_to_remove.append(entity.entity_id)
                 _LOGGER.debug(
@@ -820,6 +844,10 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         if not bermuda_entities:
             return
 
+        # Built once per run instead of scanning all devices for each entity. Valid until the
+        # last use below, because no await comes in between and self.devices cannot change.
+        prefix_index = self._build_unique_id_prefix_index()
+
         # Group entities by base address and device_id
         entities_by_base_address: dict[str, list[er.RegistryEntry]] = {}
         entities_by_device_id: dict[str, list[er.RegistryEntry]] = {}
@@ -828,7 +856,7 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
             if entity.unique_id is None:
                 continue
 
-            base_address = self._extract_base_address_from_unique_id(entity.unique_id)
+            base_address = self._extract_base_address_from_unique_id(entity.unique_id, prefix_index)
             entities_by_base_address.setdefault(base_address, []).append(entity)
 
             # Global sensors share one device but are distinct entities, never duplicates.
@@ -854,7 +882,7 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         for entities in entities_by_device_id.values():
             if len(entities) <= 1:
                 continue
-            for entity_id in self._find_duplicate_entities(entities):
+            for entity_id in self._find_duplicate_entities(entities, prefix_index):
                 if entity_id not in entities_to_remove:
                     entities_to_remove.append(entity_id)
                     duplicate_count += 1
