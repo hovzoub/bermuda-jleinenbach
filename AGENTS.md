@@ -47,7 +47,7 @@
 - Metadevices group rotating identities: IRK and iBeacon sources are merged so their changing MACs map back to a stable logical device before entity updates.
 - The `bermuda.dump_devices` service (declared in `services.yaml`) returns the coordinator’s cached device graph for troubleshooting; outputs may change between releases.
 
-## Clean & Secure Coding Standard (Python 3.13 + Home Assistant 2025.10)
+## Clean & Secure Coding Standard (Python 3.14 + Home Assistant 2026.6)
 - **Logging (ruff G004):** Use lazy `%`-style logging; never suppress `G004` above debug level.
 - **PEP 8/257 and typing:** Follow docstring conventions and strict typing (PEP 695 generics where helpful).
 - **Exceptions:** Raise precise types and chain with `raise … from …`; avoid broad `except`.
