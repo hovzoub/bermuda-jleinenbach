@@ -88,7 +88,8 @@ class BermudaDeviceTracker(BermudaEntity, BaseScannerEntity):
     # (BermudaSensor, BermudaSensorScanner), and recording them here creates
     # redundant DB writes on every area change. The state (home/not_home or the
     # associated zone) and the scanner attributes in_zones and source_type are
-    # still recorded; in_zones only changes together with the state.
+    # still recorded; in_zones changes with the state or the zone setup, not per
+    # advertisement.
     _unrecorded_attributes = frozenset({"scanner", "area"})
 
     @property
