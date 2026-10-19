@@ -4,3 +4,6 @@ pre-commit
 # AJG 2024-04-07: github not completing tests due to this.
 habluetooth
 bluetooth_data_tools
+# The pinned requirements of the Home Assistant integrations Bermuda loads with
+# (serialx, aioesphomeapi, ...) differ between Home Assistant versions; install them
+# after this file with scripts/ha_component_requirements.py (see scripts/setup).

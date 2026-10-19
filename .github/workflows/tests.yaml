@@ -12,7 +12,7 @@ on:
     - cron: "0 0 * * *"
 
 env:
-  DEFAULT_PYTHON: "3.13"
+  DEFAULT_PYTHON: "3.14"
   UV_SYSTEM_PYTHON: 1
 
 jobs:
@@ -142,7 +142,17 @@ jobs:
 
   tests:
     runs-on: ubuntu-latest
-    name: Tests
+    name: Tests (HA ${{ matrix.ha }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Lowest supported Home Assistant (hacs.json, requirements.txt); the
+          # pytest plugin pins Home Assistant exactly.
+          - ha: "2026.6.0"
+            phcc: "==0.13.336"
+          - ha: "latest"
+            phcc: ""
     steps:
       - name: Check out code from GitHub
         uses: actions/checkout@v7
@@ -161,7 +171,14 @@ jobs:
       - name: Install requirements
         run: |
           uv pip install --constraint=.github/workflows/constraints.txt pip
-          uv pip install -r requirements_test.txt
+          uv pip install -r requirements_test.txt "pytest-homeassistant-custom-component${{ matrix.phcc }}"
+          # Pins of the Home Assistant integrations Bermuda loads with, as this Home Assistant
+          # version declares them; a package that fails to build only warns.
+          python scripts/ha_component_requirements.py > ha-component-requirements.txt
+          while read -r requirement; do
+            uv pip install "$requirement" || echo "::warning::Could not install $requirement"
+          done < ha-component-requirements.txt
+          python -c "import homeassistant.const as c; print('Home Assistant', c.__version__)"
 
       - name: Run tests with coverage
         run: |
@@ -176,6 +193,7 @@ jobs:
             tests
 
       - name: Upload coverage to Codecov
+        if: matrix.ha == 'latest'
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage.xml

@@ -2,15 +2,15 @@
 
 ## Environment Requirements
 
-- **Python 3.13** is required (not 3.11 or 3.12)
-- **Home Assistant 2025.10+** or later (2026.x recommended)
+- **Python 3.14.2** or later is required (Home Assistant 2026.6 runs on it)
+- **Home Assistant 2026.6.0** or later (the device tracker is built on `BaseScannerEntity`)
 - Development happens in a Dev Container - respect `.vscode/settings.json`
 
 ## Quick Setup
 
 ```bash
-# Create virtual environment with Python 3.13
-python3.13 -m venv venv
+# Create virtual environment with Python 3.14
+python3.14 -m venv venv
 source venv/bin/activate
 
 # Install ALL dependencies (order matters for some packages like PyRIC)
@@ -18,6 +18,8 @@ pip install --upgrade pip
 pip install -r requirements.txt
 pip install -r requirements_dev.txt
 pip install -r requirements_test.txt
+# Pinned requirements of the HA integrations Bermuda loads with (serialx, aioesphomeapi, ...)
+python scripts/ha_component_requirements.py | xargs -n1 pip install
 ```
 
 ## Local Validation (Run Before EVERY Commit)
@@ -3676,14 +3678,14 @@ _LOGGER.debug(
 )
 ```
 
-### 5. Python 3.13 Required
+### 5. Python 3.14 Required
 
 The codebase uses Python 3.12+ features like `type` aliases:
 ```python
 type BermudaConfigEntry = "ConfigEntry[BermudaData]"  # Requires Python 3.12+
 ```
 
-Always use `python3.13 -m venv venv` for the virtual environment.
+Home Assistant 2026.6, the minimum version, requires Python 3.14.2. Always use `python3.14 -m venv venv` for the virtual environment.
 
 ### 6. Kalman Variance Converges Quickly
 

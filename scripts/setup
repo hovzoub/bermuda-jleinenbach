@@ -28,3 +28,7 @@ uv pip install git+https://github.com/boto/botocore
 
 uv pip install --requirement requirements.txt
 uv pip install --requirement requirements_test.txt
+# Pinned requirements of the Home Assistant integrations Bermuda loads with.
+python scripts/ha_component_requirements.py | while read -r requirement; do
+  uv pip install "$requirement" || echo "Could not install $requirement"
+done
