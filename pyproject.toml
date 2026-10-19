@@ -59,6 +59,10 @@ keep-runtime-typing = true
 max-complexity = 25
 
 [tool.ruff.lint.extend-per-file-ignores]
+"scripts/**/*.py" = [
+    "INP001", # scripts/ holds standalone tools, not a package
+    "T201",   # command-line tools print their output
+]
 "tests/**/*.py" = [
     "S101",  # asserts allowed in tests...
     "ARG",   # Unused function args -> fixtures nevertheless are functionally relevant...

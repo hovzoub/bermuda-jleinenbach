@@ -18,6 +18,8 @@ pip install --upgrade pip
 pip install -r requirements.txt
 pip install -r requirements_dev.txt
 pip install -r requirements_test.txt
+# Pinned requirements of the HA integrations Bermuda loads with (serialx, aioesphomeapi, ...)
+python scripts/ha_component_requirements.py | xargs -n1 pip install
 ```
 
 ## Local Validation (Run Before EVERY Commit)

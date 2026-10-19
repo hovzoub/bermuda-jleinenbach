@@ -172,6 +172,12 @@ jobs:
         run: |
           uv pip install --constraint=.github/workflows/constraints.txt pip
           uv pip install -r requirements_test.txt "pytest-homeassistant-custom-component${{ matrix.phcc }}"
+          # Pins of the Home Assistant integrations Bermuda loads with, as this Home Assistant
+          # version declares them; a package that fails to build only warns.
+          python scripts/ha_component_requirements.py > ha-component-requirements.txt
+          while read -r requirement; do
+            uv pip install "$requirement" || echo "::warning::Could not install $requirement"
+          done < ha-component-requirements.txt
           python -c "import homeassistant.const as c; print('Home Assistant', c.__version__)"
 
       - name: Run tests with coverage
