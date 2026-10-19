@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 from homeassistant.components.device_tracker.const import SourceType
-from homeassistant.const import STATE_HOME
+from homeassistant.const import STATE_HOME, STATE_NOT_HOME
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
+from homeassistant.setup import async_setup_component
+from pytest_homeassistant_custom_component.common import MockEntityPlatform
 
 from custom_components.bermuda.device_tracker import (
     BermudaDeviceTracker,
     async_setup_entry,
 )
+
+from .test_coordinator_methods import _make_coordinator
 
 
 class TestAsyncSetupEntry:
@@ -286,9 +292,111 @@ class TestDeviceTrackerIntegration:
 
     def test_tracker_inherits_from_correct_classes(self) -> None:
         """Test that BermudaDeviceTracker inherits from required base classes."""
-        from homeassistant.components.device_tracker.config_entry import BaseTrackerEntity
+        from homeassistant.components.device_tracker import BaseScannerEntity
 
         from custom_components.bermuda.entity import BermudaEntity
 
         assert issubclass(BermudaDeviceTracker, BermudaEntity)
-        assert issubclass(BermudaDeviceTracker, BaseTrackerEntity)
+        assert issubclass(BermudaDeviceTracker, BaseScannerEntity)
+
+
+TRACKER_ADDRESS = "aa:bb:cc:dd:ee:02"
+TRACKER_ENTITY_ID = "device_tracker.bermuda_probe"
+
+
+async def _added_tracker(
+    hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch, zones: list[dict[str, object]] | None = None
+) -> BermudaDeviceTracker:
+    """Add a tracker for a real BermudaDevice to the state machine and the entity registry."""
+    assert await async_setup_component(hass, "zone", {"zone": zones or []})
+    coordinator = _make_coordinator(hass)
+    coordinator.last_update_success = True
+    # The lightweight test coordinator skips DataUpdateCoordinator.__init__.
+    monkeypatch.setattr(coordinator, "async_add_listener", MagicMock(return_value=lambda: None))
+    device = coordinator._get_or_create_device(TRACKER_ADDRESS)
+    device.zone = STATE_HOME
+    tracker = BermudaDeviceTracker(coordinator, SimpleNamespace(options={}), TRACKER_ADDRESS)  # type: ignore[arg-type]
+    tracker.entity_id = TRACKER_ENTITY_ID
+    platform = MockEntityPlatform(hass, domain="device_tracker", platform_name="bermuda")
+    await platform.async_add_entities([tracker])
+    await hass.async_block_till_done()
+    return tracker
+
+
+class TestTrackerOnBaseScannerEntity:
+    """The tracker behaves like a Home Assistant scanner entity (in_zones, associated_zone)."""
+
+    async def test_in_zones_follows_home_state(self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) -> None:
+        """At home the tracker lists zone.home in in_zones, away it lists nothing."""
+        tracker = await _added_tracker(hass, monkeypatch)
+
+        state = hass.states.get(TRACKER_ENTITY_ID)
+        assert state is not None
+        assert state.state == STATE_HOME
+        assert state.attributes["in_zones"] == ["zone.home"]
+
+        tracker._device.zone = STATE_NOT_HOME
+        tracker.async_write_ha_state()
+        state = hass.states.get(TRACKER_ENTITY_ID)
+        assert state is not None
+        assert state.state == STATE_NOT_HOME
+        assert state.attributes["in_zones"] == []
+
+    async def test_in_zones_includes_enclosing_zone(self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A zone that encloses zone.home is listed after it."""
+        await _added_tracker(
+            hass,
+            monkeypatch,
+            [{"name": "Big", "latitude": hass.config.latitude, "longitude": hass.config.longitude, "radius": 100000}],
+        )
+
+        state = hass.states.get(TRACKER_ENTITY_ID)
+        assert state is not None
+        assert state.attributes["in_zones"] == ["zone.home", "zone.big"]
+
+    async def test_registry_identity(self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The registry entry keeps no category, the tracker translation key and the device unique_id."""
+        tracker = await _added_tracker(hass, monkeypatch)
+
+        entry = er.async_get(hass).async_get(TRACKER_ENTITY_ID)
+        assert entry is not None
+        assert entry.entity_category is None
+        assert entry.translation_key == "tracker"
+        assert entry.unique_id == tracker._device.unique_id
+
+    async def test_source_type_is_bluetooth_le(self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The state reports Bluetooth LE as source type."""
+        await _added_tracker(hass, monkeypatch)
+
+        state = hass.states.get(TRACKER_ENTITY_ID)
+        assert state is not None
+        assert state.attributes["source_type"] == SourceType.BLUETOOTH_LE
+
+    async def test_associated_zone_sets_state(self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With an associated zone in the registry options, home means that zone."""
+        await _added_tracker(
+            hass,
+            monkeypatch,
+            [{"name": "Work", "latitude": 52.0, "longitude": 13.0, "radius": 100}],
+        )
+
+        er.async_get(hass).async_update_entity_options(
+            TRACKER_ENTITY_ID, "device_tracker", {"associated_zone": "zone.work"}
+        )
+        await hass.async_block_till_done()
+
+        state = hass.states.get(TRACKER_ENTITY_ID)
+        assert state is not None
+        assert state.state == "Work"
+        assert state.attributes["in_zones"] == ["zone.work"]
+
+    async def test_recorder_excludes_only_scanner_and_area(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The recorder skips scanner and area but keeps in_zones and source_type."""
+        await _added_tracker(hass, monkeypatch)
+
+        state = hass.states.get(TRACKER_ENTITY_ID)
+        assert state is not None
+        assert state.state_info is not None
+        assert state.state_info["unrecorded_attributes"] == frozenset({"scanner", "area"})
