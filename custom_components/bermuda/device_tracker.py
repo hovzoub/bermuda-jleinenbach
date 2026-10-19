@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.components.device_tracker.entity import BaseScannerEntity
 from homeassistant.components.device_tracker.const import SourceType
+from homeassistant.components.device_tracker.entity import BaseScannerEntity
 from homeassistant.const import STATE_HOME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
