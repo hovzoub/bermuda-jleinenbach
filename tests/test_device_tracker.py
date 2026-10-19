@@ -292,7 +292,7 @@ class TestDeviceTrackerIntegration:
 
     def test_tracker_inherits_from_correct_classes(self) -> None:
         """Test that BermudaDeviceTracker inherits from required base classes."""
-        from homeassistant.components.device_tracker import BaseScannerEntity
+        from homeassistant.components.device_tracker.entity import BaseScannerEntity
 
         from custom_components.bermuda.entity import BermudaEntity
 

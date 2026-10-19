@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.components.device_tracker.config_entry import BaseTrackerEntity
+from homeassistant.components.device_tracker.entity import BaseScannerEntity
 from homeassistant.components.device_tracker.const import SourceType
-from homeassistant.const import MATCH_ALL, STATE_HOME
+from homeassistant.const import STATE_HOME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
@@ -69,12 +69,13 @@ async def async_setup_entry(
     # await coordinator.async_config_entry_first_refresh()
 
 
-class BermudaDeviceTracker(BermudaEntity, BaseTrackerEntity):
+class BermudaDeviceTracker(BermudaEntity, BaseScannerEntity):
     """A trackable Bermuda Device."""
 
     _attr_should_poll = False
     _attr_has_entity_name = True
     _attr_translation_key = "tracker"
+    _attr_source_type = SourceType.BLUETOOTH_LE
     # Override BaseTrackerEntity's default DIAGNOSTIC category.
     # Bermuda's device_tracker is the PRIMARY function (location tracking for Person entities),
     # not diagnostic information about a device.
@@ -82,12 +83,13 @@ class BermudaDeviceTracker(BermudaEntity, BaseTrackerEntity):
     # but we intentionally want None here (no category = primary entity).
     _attr_entity_category = None  # type: ignore[assignment]
 
-    # Exclude ALL extra_state_attributes from the recorder database.
-    # The "scanner" and "area" attributes duplicate data already available
-    # from dedicated sensor entities (BermudaSensor, BermudaSensorScanner).
-    # Recording them here creates redundant DB writes on every area change.
-    # The device_tracker state itself (home/not_home/zone) is still recorded.
-    _unrecorded_attributes = frozenset({MATCH_ALL})
+    # Exclude the "scanner" and "area" attributes from the recorder database.
+    # They duplicate data already available from dedicated sensor entities
+    # (BermudaSensor, BermudaSensorScanner), and recording them here creates
+    # redundant DB writes on every area change. The state (home/not_home or the
+    # associated zone) and the scanner attributes in_zones and source_type are
+    # still recorded; in_zones only changes together with the state.
+    _unrecorded_attributes = frozenset({"scanner", "area"})
 
     @property
     def unique_id(self) -> str:
@@ -104,14 +106,9 @@ class BermudaDeviceTracker(BermudaEntity, BaseTrackerEntity):
         return {"scanner": _scannername, "area": self._device.area_name}
 
     @property
-    def state(self) -> str:
-        """Return the state of the device."""
-        return self._device.zone
-
-    @property
-    def source_type(self) -> SourceType:
-        """Return the source type, eg gps or router, of the device."""
-        return SourceType.BLUETOOTH_LE
+    def is_connected(self) -> bool:
+        """Return True while Bermuda places the device at home (seen by a scanner recently)."""
+        return self._device.zone == STATE_HOME
 
     @property
     def icon(self) -> str:
