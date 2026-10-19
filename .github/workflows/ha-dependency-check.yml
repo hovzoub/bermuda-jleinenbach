@@ -14,7 +14,7 @@ on:
         type: string
 
 env:
-  DEFAULT_PYTHON: "3.13"
+  DEFAULT_PYTHON: "3.14"
   UV_SYSTEM_PYTHON: 1
 
 jobs:
@@ -23,16 +23,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
           version: "0.7.9"
           enable-cache: true
 
       - name: Set up Python ${{ env.DEFAULT_PYTHON }}
-        uses: actions/setup-python@v5.6.0
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ env.DEFAULT_PYTHON }}
 
@@ -67,6 +67,43 @@ jobs:
             uv pip install -r requirements.txt
           fi
 
+      - name: Install requirements of the integrations Bermuda loads with
+        run: |
+          source .venv/bin/activate
+          # Home Assistant installs these at runtime; a plain import needs them up front
+          # (bluetooth -> usb -> serialx -> aioesphomeapi). Walk dependencies and
+          # after_dependencies of the manifest. A package that fails to build only warns:
+          # the import test below decides.
+          python - custom_components/bermuda/manifest.json > ha-component-requirements.txt <<'EOF'
+          import json
+          import pathlib
+          import sys
+
+          import homeassistant.components as components
+
+          root = pathlib.Path(components.__path__[0])
+          keys = ("dependencies", "after_dependencies")
+          manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          todo = [domain for key in keys for domain in manifest.get(key, [])]
+          seen = set()
+          requirements = set()
+          while todo:
+              domain = todo.pop()
+              if domain in seen:
+                  continue
+              seen.add(domain)
+              path = root / domain / "manifest.json"
+              if not path.exists():
+                  continue
+              data = json.loads(path.read_text())
+              requirements.update(data.get("requirements", []))
+              todo.extend(d for key in keys for d in data.get(key, []))
+          print("\n".join(sorted(requirements)))
+          EOF
+          while read -r requirement; do
+            uv pip install "$requirement" || echo "::warning::Could not install $requirement"
+          done < ha-component-requirements.txt
+
       - name: Check for dependency conflicts
         id: pip-check
         run: |
@@ -83,13 +120,13 @@ jobs:
         id: import-test
         run: |
           source .venv/bin/activate
-          cd custom_components
-          if python -c "import bermuda" 2>/dev/null; then
+          if python -c "import custom_components.bermuda; import custom_components.bermuda.device_tracker"; then
             echo "status=success" >> $GITHUB_OUTPUT
             echo "Integration imports successfully"
           else
             echo "status=failed" >> $GITHUB_OUTPUT
-            echo "::warning::Integration import failed"
+            echo "::error::Integration import failed"
+            exit 1
           fi
 
       - name: Generate summary
@@ -107,16 +144,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
           version: "0.7.9"
           enable-cache: true
 
       - name: Set up Python ${{ env.DEFAULT_PYTHON }}
-        uses: actions/setup-python@v5.6.0
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ env.DEFAULT_PYTHON }}
 

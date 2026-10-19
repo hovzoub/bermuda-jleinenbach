@@ -4,3 +4,5 @@ pre-commit
 # AJG 2024-04-07: github not completing tests due to this.
 habluetooth
 bluetooth_data_tools
+# Home Assistant 2026.6+ imports serialx through bluetooth -> usb; without it conftest fails.
+serialx
