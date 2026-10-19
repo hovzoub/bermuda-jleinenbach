@@ -472,3 +472,26 @@ async def test_cleanup_keeps_live_entity_when_device_unique_id_is_none(hass: Hom
     await _cleanup(hass, coordinator)
 
     assert removed == [entities[0]]
+
+
+async def test_cleanup_builds_prefix_index_once(hass: HomeAssistant) -> None:
+    """One cleanup run resolves all entities through a single index instead of rebuilding it per lookup."""
+    coordinator, _, removed = _setup(
+        hass,
+        [
+            ("sensor", f"{MAC.upper()}_floor"),
+            ("sensor", f"{MAC}_floor"),
+            ("sensor", f"{MAC}_range"),
+            ("sensor", "ff:ff:ff:ff:ff:ff_range"),
+        ],
+    )
+    coordinator._get_or_create_device(MAC)
+    _attach_to_one_device(hass, coordinator)
+
+    with patch.object(
+        coordinator, "_build_unique_id_prefix_index", wraps=coordinator._build_unique_id_prefix_index
+    ) as build:
+        await _cleanup(hass, coordinator)
+
+    assert build.call_count == 1
+    assert len(removed) == 2

@@ -688,8 +688,9 @@ class BermudaDataUpdateCoordinator(DataUpdateCoordinator[Any]):
         (iBeacon "<uuid>_<major>_<minor>") and for any entity suffix. Entities
         are created with BermudaDevice.unique_id, so it is matched as well as the
         WiFi MAC. For a scanner, unique_id is the MAC from the device registry
-        (usually the WiFi MAC) or, without a registry entry, the scanner's source
-        address. The matched prefix can therefore differ from the devices key: a
+        (usually the WiFi MAC), else its Bluetooth address from the registry, else
+        the scanner's source address. The matched prefix can therefore differ from
+        the devices key: a
         scanner that is also a tracked device is keyed by its BLE MAC in devices,
         while its unique_ids start with its WiFi MAC.
         """
