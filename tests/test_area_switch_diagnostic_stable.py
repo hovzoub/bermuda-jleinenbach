@@ -37,7 +37,7 @@ AREA_SELECTION_PATH = Path(inspect.getfile(area_selection))
 
 # Placeholders in the ``tests.reason`` f-strings that render a number without a
 # format spec. A placeholder with a format spec always renders a number.
-ZAHL_AUSDRUECKE = frozenset(
+NUMBER_EXPRESSIONS = frozenset(
     {
         "device.pending_streak",
         "streak_target",
@@ -50,7 +50,7 @@ ZAHL_AUSDRUECKE = frozenset(
     }
 )
 # Placeholders that render text. They keep the same value in both variants.
-TEXT_AUSDRUECKE = frozenset(
+TEXT_EXPRESSIONS = frozenset(
     {
         "scannerless_indicator",
         "floor_indicator",
@@ -246,13 +246,13 @@ def _render(template: ast.JoinedStr, variant: int) -> str:
             number += 1
             value = 1.25 * number if variant == 1 else -37.5 * number
             out.append(format(value, spec))
-        elif expr in ZAHL_AUSDRUECKE:
+        elif expr in NUMBER_EXPRESSIONS:
             number += 1
             out.append(str(number + 2 if variant == 1 else -11 * number))
-        elif expr in TEXT_AUSDRUECKE:
+        elif expr in TEXT_EXPRESSIONS:
             out.append(f"<{expr}>")
         else:
-            pytest.fail(f"Placeholder {expr!r} is neither in ZAHL_AUSDRUECKE nor in TEXT_AUSDRUECKE")
+            pytest.fail(f"Placeholder {expr!r} is neither in NUMBER_EXPRESSIONS nor in TEXT_EXPRESSIONS")
     return "".join(out)
 
 
@@ -339,7 +339,7 @@ def test_t5_every_reason_template_is_stable(template: ast.JoinedStr) -> None:
     second = _render(template, 2)
     has_number = any(
         isinstance(part, ast.FormattedValue)
-        and (part.format_spec is not None or ast.unparse(part.value) in ZAHL_AUSDRUECKE)
+        and (part.format_spec is not None or ast.unparse(part.value) in NUMBER_EXPRESSIONS)
         for part in template.values
     )
     assert (first != second) is has_number
