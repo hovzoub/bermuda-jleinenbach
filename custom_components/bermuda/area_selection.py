@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import statistics
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
@@ -120,6 +121,11 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+# Numbers (with sign) in an AreaTests reason, masked in the published sensor
+# state so that per-cycle values (scores, streak counters, distances) do not
+# fire a state_changed event on every coordinator cycle.
+_NUM = re.compile(r"[-+]?\d+(?:\.\d+)?")
+
 
 @dataclass(slots=True)
 class ScannerOnlineStatus:
@@ -153,8 +159,10 @@ class AreaTests:
     users and developers to understand WHY a particular room was selected.
 
     The data is exposed via:
-    - `sensortext()`: Compact string for the sensor's native_value (max 255 chars)
-    - `to_dict()`: Structured dict for sensor's extra_state_attributes
+    - `stable_sensortext()`: Sensor native_value without per-cycle numbers (max 255 chars)
+    - `to_stable_dict()`: Sensor extra_state_attributes without per-cycle values
+    - `sensortext()`: Full compact string, stored in `diag_area_switch` (returned by dump_devices)
+    - `to_dict()`: Full structured dict with every per-cycle value
     - `__str__()`: Verbose format for debug logging
     """
 
@@ -291,6 +299,106 @@ class AreaTests:
 
         return " | ".join(parts)[:255]
 
+    def stable_sensortext(self) -> str:
+        """
+        Return the sensor state: the decision without per-cycle numbers.
+
+        Numbers in the reason are replaced by ``#`` before the reason is cut,
+        and scores, distances, sample counts, coverage penalty and advert age
+        are left out. The state therefore changes only when the decision path,
+        the verdict, the areas, the UKF mode, the profile kind, the offline
+        count or a sanity failure changes. ``sensortext()`` keeps the full detail.
+        """
+        parts: list[str] = []
+
+        path_indicator = {
+            "UKF": "🎯",
+            "MIN_DISTANCE": "📏",
+            "VIRTUAL": "👻",
+            "LOCKED": "🔒",
+            "RESCUE": "🛟",
+            "UNKNOWN": "❓",
+        }.get(self.decision_path, "❓")
+
+        reason_short = _NUM.sub("#", self.reason or "pending")[:50]
+        parts.append(f"{path_indicator}{self.decision_path}: {reason_short}")
+
+        from_area = (self.areas[0] or "?")[:12]
+        to_area = (self.areas[1] or "?")[:12]
+        if from_area != to_area and self.areas[0]:
+            parts.append(f"📍{from_area}→{to_area}")
+        elif to_area != "?":
+            parts.append(f"📍{to_area}")
+
+        if self.decision_path == "UKF" and self.ukf_match_score is not None:
+            mode = "R" if self.ukf_retention_mode else "S"
+            sticky = "+" if self.ukf_stickiness_applied else ""
+            parts.append(f"UKF{sticky}({mode})")
+
+        if self.profile_source != "NONE":
+            parts.append(f"Prof:{'BTN' if self.profile_has_button else 'AUTO'}")
+
+        if self.offline_scanners_count > 0:
+            parts.append(f"Offline:{self.offline_scanners_count}")
+
+        failures = []
+        if self.passed_proximity_check is False:
+            failures.append("PROX")
+        if self.passed_topological_check is False:
+            failures.append("TOPO")
+        if self.passed_rssi_sanity is False:
+            failures.append("RSSI")
+        if failures:
+            parts.append(f"⚠️{','.join(failures)}")
+
+        return " | ".join(parts)[:255]
+
+    def to_stable_dict(self) -> dict[str, Any]:
+        """
+        Return the sensor attributes: the keys of ``to_dict()`` that do not change per cycle.
+
+        The reason has its numbers replaced by ``#``. Scores, thresholds,
+        sample counts, distances, nearest scanner, advert age, top candidates
+        and coverage penalty are left out; ``to_dict()`` keeps them. A key is
+        present under the same condition as in ``to_dict()``.
+        """
+        attrs: dict[str, Any] = {
+            "decision_path": self.decision_path,
+            "reason": _NUM.sub("#", self.reason) if self.reason is not None else None,
+            "from_area": self.areas[0] or None,
+            "to_area": self.areas[1] or None,
+            "same_area": self.same_area,
+        }
+
+        if self.ukf_match_score is not None:
+            attrs["ukf_retention_mode"] = self.ukf_retention_mode
+            attrs["ukf_stickiness_applied"] = self.ukf_stickiness_applied
+
+        if self.profile_source != "NONE":
+            attrs["profile_source"] = self.profile_source
+            attrs["profile_has_button_training"] = self.profile_has_button
+
+        attrs["is_scannerless_room"] = self.is_scannerless_room
+
+        if self.passed_proximity_check is not None:
+            attrs["sanity_proximity_passed"] = self.passed_proximity_check
+        if self.passed_topological_check is not None:
+            attrs["sanity_topological_passed"] = self.passed_topological_check
+        if self.passed_rssi_sanity is not None:
+            attrs["sanity_rssi_passed"] = self.passed_rssi_sanity
+
+        if self.offline_scanners_count > 0:
+            attrs["offline_scanners_count"] = self.offline_scanners_count
+            attrs["offline_scanner_addrs"] = self.offline_scanner_addrs
+            if self.auto_learning_blocked_offline:
+                attrs["auto_learning_blocked_offline"] = True
+
+        if self.floors[0] or self.floors[1]:
+            attrs["from_floor"] = self.floors[0]
+            attrs["to_floor"] = self.floors[1]
+
+        return attrs
+
     def to_dict(self) -> dict[str, Any]:
         """
         Return structured dictionary for sensor extra_state_attributes.
@@ -419,6 +527,12 @@ class AreaTests:
             )
 
         return "\n".join(lines)
+
+
+def _set_area_diagnostics(device: BermudaDevice, tests: AreaTests) -> None:
+    """Store the area decision and its full diagnostic text on the device."""
+    device.area_tests = tests
+    device.diag_area_switch = tests.sensortext()
 
 
 @dataclass(slots=True)
@@ -1895,8 +2009,7 @@ class AreaSelectionHandler:
                             f"WIN - single-scanner retention "
                             f"(RSSI {current_rssi:.0f} ≈ {expected_rssi:.0f}±{rssi_threshold:.0f})"
                         )
-                        device.area_tests = tests
-                        device.diag_area_switch = tests.sensortext()
+                        _set_area_diagnostics(device, tests)
                         return True
                     # RSSI doesn't match profile - fall back to min_distance
                     if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -2043,8 +2156,7 @@ class AreaSelectionHandler:
                 tests.areas = (current_area_id or "", current_area_id or "")
                 tests.same_area = True
                 tests.reason = f"WIN - low-score retention ({effective_match_score:.2f} < {effective_threshold:.2f})"
-                device.area_tests = tests
-                device.diag_area_switch = tests.sensortext()
+                _set_area_diagnostics(device, tests)
                 return True
             tests.reason = f"REJECT - score too low ({effective_match_score:.2f} < {effective_threshold:.2f})"
             return False
@@ -2373,8 +2485,7 @@ class AreaSelectionHandler:
             tests.same_area = True
             scannerless_indicator = " (scannerless)" if scanner_less_room else ""
             tests.reason = f"WIN - same area refresh{scannerless_indicator} (score {effective_match_score:.2f})"
-            device.area_tests = tests
-            device.diag_area_switch = tests.sensortext()
+            _set_area_diagnostics(device, tests)
             return True
 
         # If no current area, bootstrap immediately
@@ -2395,8 +2506,7 @@ class AreaSelectionHandler:
             tests.same_area = False
             scannerless_indicator = " (scannerless)" if scanner_less_room else ""
             tests.reason = f"WIN - bootstrap{scannerless_indicator} (score {effective_match_score:.2f})"
-            device.area_tests = tests
-            device.diag_area_switch = tests.sensortext()
+            _set_area_diagnostics(device, tests)
             return True
 
         # Determine streak target based on floor change
@@ -2451,8 +2561,7 @@ class AreaSelectionHandler:
                 f"WIN -{floor_indicator} switch{scannerless_indicator} "
                 f"(streak {device.pending_streak}/{streak_target}, score {effective_match_score:.2f})"
             )
-            device.area_tests = tests
-            device.diag_area_switch = tests.sensortext()
+            _set_area_diagnostics(device, tests)
         # Streak not reached - keep current area
         # NOTE: Use device.area_advert here (the actual advert object), not current_device_area_id.
         # apply_scanner_selection needs an advert object. The area_id determination above
@@ -2468,8 +2577,7 @@ class AreaSelectionHandler:
                 f"PENDING -{floor_indicator} streak {device.pending_streak}/{streak_target} "
                 f"(score {effective_match_score:.2f})"
             )
-            device.area_tests = tests
-            device.diag_area_switch = tests.sensortext()
+            _set_area_diagnostics(device, tests)
 
         return True
 
@@ -3127,7 +3235,7 @@ class AreaSelectionHandler:
             device.ukf_scannerless_area = True
             device.reset_pending_state()
             tests.reason = f"WIN via virtual distance ({virtual_winner_distance:.2f}m) for scannerless room"
-            device.diag_area_switch = tests.sensortext()
+            _set_area_diagnostics(device, tests)
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
                     "Applied virtual distance winner for %s: area=%s distance=%.2fm",
@@ -3227,7 +3335,7 @@ class AreaSelectionHandler:
                 winner = None
 
         if device.area_advert != winner and tests.reason is not None:
-            device.diag_area_switch = tests.sensortext()
+            _set_area_diagnostics(device, tests)
 
         # Apply the newly-found closest scanner
         def _apply_selection(advert: BermudaAdvert | None) -> None:
@@ -3501,5 +3609,5 @@ class AreaSelectionHandler:
             device.reset_pending_state()
             _apply_selection(winner)
         else:
-            device.diag_area_switch = tests.sensortext()
+            _set_area_diagnostics(device, tests)
             _apply_selection(device.area_advert)
