@@ -3230,11 +3230,16 @@ class AreaSelectionHandler:
 
         # If a virtual room won, apply it directly and return
         if virtual_winner_area_id is not None:
+            previous_area_name = device.area_name
             device.update_area_and_floor(virtual_winner_area_id)
             device.area_distance = virtual_winner_distance
             device.area_distance_stamp = nowstamp
             device.ukf_scannerless_area = True
             device.reset_pending_state()
+            tests.decision_path = "VIRTUAL"
+            tests.is_scannerless_room = True
+            tests.virtual_distance = virtual_winner_distance
+            tests.areas = (previous_area_name or "", device.area_name or "")
             tests.reason = f"WIN via virtual distance ({virtual_winner_distance:.2f}m) for scannerless room"
             _set_area_diagnostics(device, tests)
             if _LOGGER.isEnabledFor(logging.DEBUG):
