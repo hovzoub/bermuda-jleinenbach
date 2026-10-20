@@ -306,8 +306,9 @@ class AreaTests:
         Numbers in the reason are replaced by ``#`` before the reason is cut,
         and scores, distances, sample counts, coverage penalty and advert age
         are left out. The state therefore changes only when the decision path,
-        the verdict, the areas, the UKF mode, the profile kind, the offline
-        count or a sanity failure changes. ``sensortext()`` keeps the full detail.
+        the reason apart from its numbers, the areas, the UKF mode, the profile
+        kind, the offline count or a sanity failure changes. ``sensortext()``
+        keeps the full detail.
         """
         parts: list[str] = []
 

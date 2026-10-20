@@ -187,6 +187,9 @@ def _volatile_full_tests() -> AreaTests:
         nearest_scanner_distance=2.7,
         virtual_distance=3.25,
         distance=(1.9, 3.1),
+        pcnt_diff=0.8,
+        ukf_threshold_used=0.3,
+        nearest_scanner_area="flur",
         profile_sample_count=180,
         winner_advert_age=44.0,
     )
