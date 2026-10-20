@@ -316,6 +316,12 @@ def test_t3_area_change_changes_state_and_attributes() -> None:
             id="win-reject",
         ),
         pytest.param({"decision_path": "UKF"}, {"decision_path": "MIN_DISTANCE"}, id="ukf-min-distance"),
+        # Without a UKF score only the path itself tells the two decisions apart.
+        pytest.param(
+            {"decision_path": "MIN_DISTANCE", "ukf_match_score": None},
+            {"decision_path": "VIRTUAL", "ukf_match_score": None},
+            id="min-distance-virtual",
+        ),
     ],
 )
 def test_t4_verdict_and_path_change_the_state(first: dict[str, Any], second: dict[str, Any]) -> None:
