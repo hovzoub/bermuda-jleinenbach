@@ -14,6 +14,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 
+from custom_components.bermuda.area_selection import AreaTests
 from custom_components.bermuda.const import (
     ADDR_TYPE_IBEACON,
     ADDR_TYPE_PRIVATE_BLE_DEVICE,
@@ -495,7 +496,9 @@ class TestBermudaSensorRange:
 class TestBermudaSensorAreaSwitchReason:
     """Tests for BermudaSensorAreaSwitchReason class."""
 
-    def _create_sensor(self, diag_area_switch: str | None = None) -> BermudaSensorAreaSwitchReason:
+    def _create_sensor(
+        self, diag_area_switch: str | None = None, area_tests: AreaTests | None = None
+    ) -> BermudaSensorAreaSwitchReason:
         """Create a BermudaSensorAreaSwitchReason instance for testing."""
         mock_coordinator = MagicMock()
         mock_coordinator.last_update_success = True
@@ -505,6 +508,7 @@ class TestBermudaSensorAreaSwitchReason:
         mock_device.unique_id = "test_unique_id"
         mock_device.address = "aa:bb:cc:dd:ee:ff"
         mock_device.diag_area_switch = diag_area_switch
+        mock_device.area_tests = area_tests
         mock_coordinator.devices = {"aa:bb:cc:dd:ee:ff": mock_device}
 
         mock_config_entry = MagicMock()
@@ -558,8 +562,9 @@ class TestBermudaSensorAreaSwitchReason:
     def test_native_value_truncates_long_string(self) -> None:
         """Test that native_value truncates strings longer than 255 chars."""
         long_reason = "x" * 300
-        sensor = self._create_sensor(diag_area_switch=long_reason)
-        assert sensor.native_value == long_reason[:255]
+        sensor = self._create_sensor(diag_area_switch=long_reason, area_tests=AreaTests())
+        with patch.object(AreaTests, "stable_sensortext", create=True, return_value=long_reason):
+            assert sensor.native_value == long_reason[:255]
 
 
 class TestBermudaSensorAreaLastSeen:
