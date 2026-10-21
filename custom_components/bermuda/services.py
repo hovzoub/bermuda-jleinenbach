@@ -8,6 +8,7 @@ coordinator (similar to ESPHome, ZHA, and Bluetooth integrations).
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from typing import TYPE_CHECKING, Any, cast
 
@@ -254,5 +255,12 @@ class BermudaServiceHandler:
             return {self.redact_data(k, False): self.redact_data(v, False) for k, v in data.items()}
         elif isinstance(data, list):
             return [self.redact_data(v, False) for v in data]
+        elif isinstance(data, tuple):
+            return tuple(self.redact_data(v, False) for v in data)
+        elif dataclasses.is_dataclass(data) and not isinstance(data, type):
+            # Dataclass values (e.g. AreaTests in BermudaDevice.to_dict) would otherwise be
+            # serialized with their fields untouched, MAC addresses included. A shallow field
+            # mapping avoids the deep copy of dataclasses.asdict(); nested values recurse here.
+            return {f.name: self.redact_data(getattr(data, f.name), False) for f in dataclasses.fields(data)}
         else:  # Base Case
             return data

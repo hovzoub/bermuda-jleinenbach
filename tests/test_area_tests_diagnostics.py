@@ -783,7 +783,7 @@ class TestSensorExtraStateAttributes:
         assert result is None
 
     def test_extra_state_attributes_returns_dict_when_area_tests_set(self) -> None:
-        """Test extra_state_attributes returns to_dict() when area_tests is set."""
+        """Test extra_state_attributes returns to_stable_dict() when area_tests is set."""
         from custom_components.bermuda.sensor import BermudaSensorAreaSwitchReason
 
         # Create AreaTests with some data
@@ -808,17 +808,19 @@ class TestSensorExtraStateAttributes:
         sensor._device = mock_device
         sensor._coordinator = mock_coordinator
 
-        # Test that extra_state_attributes returns the to_dict() result
+        # Test that extra_state_attributes returns the to_stable_dict() result
         result = sensor.extra_state_attributes
         assert result is not None
+        assert result == area_tests.to_stable_dict()
         assert result["decision_path"] == "UKF"
         assert result["from_area"] == "Kitchen"
         assert result["to_area"] == "Living Room"
-        assert result["ukf_score"] == 0.85
+        assert "ukf_score" not in result
+        assert area_tests.to_dict()["ukf_score"] == 0.85
         assert result["reason"] == "WIN - UKF match"
 
     def test_extra_state_attributes_includes_all_ukf_fields(self) -> None:
-        """Test extra_state_attributes includes all UKF-related fields."""
+        """Test extra_state_attributes keeps the stable UKF fields and drops the per-cycle ones."""
         from custom_components.bermuda.sensor import BermudaSensorAreaSwitchReason
 
         # Create comprehensive AreaTests
@@ -848,16 +850,19 @@ class TestSensorExtraStateAttributes:
         result = sensor.extra_state_attributes
         assert result is not None
 
-        # Verify UKF fields
-        assert result["ukf_score"] == 0.75
-        assert result["ukf_current_score"] == 0.55
+        # Verify UKF fields: the mode flags stay, the per-cycle values move to to_dict()
         assert result["ukf_retention_mode"] is True
         assert result["ukf_stickiness_applied"] is True
-        assert result["ukf_threshold"] == 0.15
+        for key in ("ukf_score", "ukf_current_score", "ukf_threshold", "profile_samples"):
+            assert key not in result
+        full = area_tests.to_dict()
+        assert full["ukf_score"] == 0.75
+        assert full["ukf_current_score"] == 0.55
+        assert full["ukf_threshold"] == 0.15
+        assert full["profile_samples"] == 60
 
         # Verify profile fields
         assert result["profile_source"] == "BUTTON_TRAINED"
-        assert result["profile_samples"] == 60
         assert result["profile_has_button_training"] is True
 
         # Verify sanity checks

@@ -505,10 +505,11 @@ class BermudaSensorAreaSwitchReason(BermudaSensor):
     _attr_entity_registry_enabled_default = False
 
     # Exclude ALL extra_state_attributes from the recorder database.
-    # area_tests.to_dict() returns a large diagnostic dict that changes
-    # every coordinator cycle (~1.05s). Recording this would create massive
-    # DB writes with no historical value. The current state is still
-    # available in the UI and via templates.
+    # Excluding them does not stop state_changed: HA still fires it and the
+    # recorder still writes a states row whenever the state or any attribute
+    # differs. State and attributes therefore come from stable_sensortext()
+    # and to_stable_dict(), which leave out per-cycle numbers; the full
+    # detail stays in diag_area_switch and area_tests (bermuda.dump_devices).
     _unrecorded_attributes = frozenset({MATCH_ALL})
 
     @property
@@ -517,16 +518,17 @@ class BermudaSensorAreaSwitchReason(BermudaSensor):
 
     @property
     def native_value(self) -> str | None:
-        if self._device.diag_area_switch is not None:
-            return self._device.diag_area_switch[:255]
-        return None
+        """Return the last area decision without per-cycle numbers."""
+        if self._device.area_tests is None:
+            return None
+        return self._device.area_tests.stable_sensortext()[:255]
 
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
-        """Return structured diagnostic data as attributes."""
+        """Return the stable part of the diagnostic data as attributes."""
         if self._device.area_tests is None:
             return None
-        return self._device.area_tests.to_dict()
+        return self._device.area_tests.to_stable_dict()
 
 
 class BermudaSensorEstimatedBroadcastInterval(BermudaSensor):
