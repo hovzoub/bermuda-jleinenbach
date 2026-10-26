@@ -14,6 +14,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 
+from custom_components.bermuda.area_selection import AreaTests
 from custom_components.bermuda.const import (
     ADDR_TYPE_IBEACON,
     ADDR_TYPE_PRIVATE_BLE_DEVICE,
@@ -113,7 +114,7 @@ class TestBermudaSensor:
         mock_device.floor_icon = "mdi:home-floor-0"
         mock_device.address_type = address_type
         mock_device.adverts = {}
-        mock_device.area_state_metadata = MagicMock(return_value={"metadata": "value"})
+        mock_device.area_state_flags = MagicMock(return_value={"area_is_stale": False})
         mock_coordinator.devices = {"aa:bb:cc:dd:ee:ff": mock_device}
 
         mock_config_entry = MagicMock()
@@ -495,7 +496,9 @@ class TestBermudaSensorRange:
 class TestBermudaSensorAreaSwitchReason:
     """Tests for BermudaSensorAreaSwitchReason class."""
 
-    def _create_sensor(self, diag_area_switch: str | None = None) -> BermudaSensorAreaSwitchReason:
+    def _create_sensor(
+        self, diag_area_switch: str | None = None, area_tests: AreaTests | None = None
+    ) -> BermudaSensorAreaSwitchReason:
         """Create a BermudaSensorAreaSwitchReason instance for testing."""
         mock_coordinator = MagicMock()
         mock_coordinator.last_update_success = True
@@ -505,6 +508,7 @@ class TestBermudaSensorAreaSwitchReason:
         mock_device.unique_id = "test_unique_id"
         mock_device.address = "aa:bb:cc:dd:ee:ff"
         mock_device.diag_area_switch = diag_area_switch
+        mock_device.area_tests = area_tests
         mock_coordinator.devices = {"aa:bb:cc:dd:ee:ff": mock_device}
 
         mock_config_entry = MagicMock()
@@ -558,8 +562,9 @@ class TestBermudaSensorAreaSwitchReason:
     def test_native_value_truncates_long_string(self) -> None:
         """Test that native_value truncates strings longer than 255 chars."""
         long_reason = "x" * 300
-        sensor = self._create_sensor(diag_area_switch=long_reason)
-        assert sensor.native_value == long_reason[:255]
+        sensor = self._create_sensor(diag_area_switch=long_reason, area_tests=AreaTests())
+        with patch.object(AreaTests, "stable_sensortext", create=True, return_value=long_reason):
+            assert sensor.native_value == long_reason[:255]
 
 
 class TestBermudaSensorAreaLastSeen:
@@ -891,7 +896,7 @@ class TestDeviceNewCallback:
         mock_device.floor_icon = "mdi:home-floor-0"
         mock_device.address_type = "public"
         mock_device.adverts = {}
-        mock_device.area_state_metadata = MagicMock(return_value={})
+        mock_device.area_state_flags = MagicMock(return_value={})
 
         mock_coordinator = MagicMock()
         mock_coordinator.hass = hass
@@ -947,7 +952,7 @@ class TestDeviceNewCallback:
         mock_device.area_last_seen_icon = "mdi:clock"
         mock_device.address_type = "public"
         mock_device.adverts = {}
-        mock_device.area_state_metadata = MagicMock(return_value={})
+        mock_device.area_state_flags = MagicMock(return_value={})
 
         mock_coordinator = MagicMock()
         mock_coordinator.hass = hass
@@ -1000,7 +1005,7 @@ class TestDeviceNewCallback:
         mock_device.area_last_seen_icon = "mdi:clock"
         mock_device.address_type = "public"
         mock_device.adverts = {}
-        mock_device.area_state_metadata = MagicMock(return_value={})
+        mock_device.area_state_flags = MagicMock(return_value={})
 
         mock_coordinator = MagicMock()
         mock_coordinator.hass = hass
@@ -1060,7 +1065,7 @@ class TestDeviceNewCallback:
         mock_device.area_last_seen_icon = "mdi:clock"
         mock_device.address_type = "public"
         mock_device.adverts = {}
-        mock_device.area_state_metadata = MagicMock(return_value={})
+        mock_device.area_state_flags = MagicMock(return_value={})
 
         mock_scanner = MagicMock()
         mock_scanner.is_remote_scanner = False
@@ -1164,11 +1169,8 @@ class TestRecorderBaseline:
         mock_device.floor_level = 0
         mock_device.current_mac = "aa:bb:cc:dd:ee:ff"
         mock_device.area_distance = 2.5
-        mock_device.area_state_metadata = MagicMock(
+        mock_device.area_state_flags = MagicMock(
             return_value={
-                "last_good_area_age_s": 1.5,
-                "last_good_distance_age_s": 0.8,
-                "area_retention_seconds_remaining": 898.2,
                 "area_is_stale": False,
                 "area_retained": False,
                 "area_source": "min_distance",
@@ -1397,20 +1399,20 @@ class TestRecorderBaseline:
         assert "area_retained" in unrecorded
         assert "area_source" in unrecorded
 
-    def test_area_sensor_includes_time_metadata_in_attributes(self) -> None:
-        """BASELINE: Area sensor includes time-based metadata in extra_state_attributes.
+    def test_area_sensor_omits_time_metadata_from_attributes(self) -> None:
+        """Area sensor exposes the transition flags but no time-based ages.
 
-        Verifies area_state_metadata() keys are present. After Stage 1, these
-        keys will STILL be in extra_state_attributes (live), but excluded
-        from the recorder via _unrecorded_attributes.
+        Time-based ages change every coordinator cycle. As attributes they
+        force a state_changed per cycle even when excluded from the recorder,
+        so only the underlying stamps remain available via dump_devices/diagnostics.
         """
         sensor = self._create_area_sensor("Area")
         attrs = sensor.extra_state_attributes
 
-        # Time-based attributes (problematic for DB)
-        assert "last_good_area_age_s" in attrs
-        assert "last_good_distance_age_s" in attrs
-        assert "area_retention_seconds_remaining" in attrs
+        # Time-based attributes must not be exposed
+        assert "last_good_area_age_s" not in attrs
+        assert "last_good_distance_age_s" not in attrs
+        assert "area_retention_seconds_remaining" not in attrs
         # Stable attributes (valuable for history)
         assert "area_is_stale" in attrs
         assert "area_retained" in attrs
@@ -1425,17 +1427,15 @@ class TestRecorderBaseline:
         assert "last_good_distance_age_s" in unrecorded
         assert "area_retention_seconds_remaining" in unrecorded
 
-    def test_floor_sensor_still_exposes_time_metadata_live(self) -> None:
-        """STAGE 1: Floor sensor still has time metadata in extra_state_attributes (live).
-
-        _unrecorded_attributes only affects the recorder DB, not live state.
-        """
+    def test_floor_sensor_omits_time_metadata_live(self) -> None:
+        """Floor sensor does not expose time-based ages as attributes."""
         sensor = self._create_area_sensor("Floor")
         attrs = sensor.extra_state_attributes
 
-        assert "last_good_area_age_s" in attrs
-        assert "last_good_distance_age_s" in attrs
-        assert "area_retention_seconds_remaining" in attrs
+        assert "last_good_area_age_s" not in attrs
+        assert "last_good_distance_age_s" not in attrs
+        assert "area_retention_seconds_remaining" not in attrs
+        assert "area_is_stale" in attrs
 
     def test_distance_sensor_time_metadata_excluded_from_recorder(self) -> None:
         """STAGE 1: Distance sensor inherits _unrecorded_attributes from BermudaSensor."""
@@ -1446,14 +1446,15 @@ class TestRecorderBaseline:
         assert "last_good_distance_age_s" in unrecorded
         assert "area_retention_seconds_remaining" in unrecorded
 
-    def test_distance_sensor_still_exposes_time_metadata_live(self) -> None:
-        """STAGE 1: Distance sensor still has time metadata in extra_state_attributes (live)."""
+    def test_distance_sensor_omits_time_metadata_live(self) -> None:
+        """Distance sensor does not expose time-based ages as attributes."""
         sensor = self._create_area_sensor("Distance")
         attrs = sensor.extra_state_attributes
 
-        assert "last_good_area_age_s" in attrs
-        assert "last_good_distance_age_s" in attrs
-        assert "area_retention_seconds_remaining" in attrs
+        assert "last_good_area_age_s" not in attrs
+        assert "last_good_distance_age_s" not in attrs
+        assert "area_retention_seconds_remaining" not in attrs
+        assert "area_is_stale" in attrs
 
     def test_area_sensor_stable_attributes_present(self) -> None:
         """BASELINE: Stable attributes (area_id, floor_*) are in extra_state_attributes.
@@ -1864,7 +1865,7 @@ class TestSensorCoverageExtension:
         mock_device.floor_icon = "mdi:home-floor-0"
         mock_device.address_type = "public"
         mock_device.adverts = {}
-        mock_device.area_state_metadata = MagicMock(return_value={})
+        mock_device.area_state_flags = MagicMock(return_value={})
 
         # Scanner that is NOT ready (remote scanner without wifi mac)
         mock_scanner = MagicMock()

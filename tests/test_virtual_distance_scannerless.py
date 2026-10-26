@@ -302,6 +302,65 @@ class TestAreaHasScanner:
 # =============================================================================
 
 
+def _run_lagerraum_virtual_scenario(coordinator: BermudaDataUpdateCoordinator) -> BermudaDevice:
+    """Run the Lagerraum scenario in which the scannerless room wins by virtual distance."""
+    device_addr = "AA:BB:CC:DD:EE:01"
+    lagerraum_area = "area-lagerraum"
+    yunas_area = "area-yunas-zimmer"
+    technik_area = "area-technikraum"
+
+    device = _configure_device(coordinator, device_addr)
+
+    # Set up two scanners (required by UKF_MIN_SCANNERS = 2)
+    yunas_scanner = _make_scanner_device("yunas-scanner", yunas_area, floor_id="floor-og", floor_level=1)
+    technik_scanner = _make_scanner_device("technik-scanner", technik_area, floor_id="floor-kg", floor_level=-1)
+    coordinator._scanners.add(yunas_scanner)
+    coordinator._scanners.add(technik_scanner)
+
+    # Create button-trained profile for Lagerraum (with readings from both scanners)
+    scanner_addrs = [yunas_scanner.address, technik_scanner.address]
+    trained_rssi = [-75.0, -72.0]  # What we see when in Lagerraum
+    profile = _create_button_trained_profile(lagerraum_area, scanner_addrs, trained_rssi)
+    # Use device.address (lowercase) as key - BermudaDevice normalizes addresses
+    coordinator.correlations[device.address] = {lagerraum_area: profile}
+
+    # Set up UKF with current readings that match the trained profile well
+    current_readings = {
+        yunas_scanner.address: -76.0,  # Close to trained -75
+        technik_scanner.address: -73.0,  # Close to trained -72
+    }
+    _setup_ukf_with_readings(coordinator, device.address, current_readings)
+
+    # Set up Yunas Zimmer as the current physical scanner option (5.2m away)
+    yunas_advert = _make_advert(
+        "yunas-scanner",
+        yunas_area,
+        distance=5.2,
+        rssi=-76.0,
+        floor_id="floor-og",
+        floor_level=1,
+        hist_distance_by_interval=[5.2] * 10,
+    )
+    technik_advert = _make_advert(
+        "technik-scanner",
+        technik_area,
+        distance=6.5,
+        rssi=-73.0,
+        floor_id="floor-kg",
+        floor_level=-1,
+        hist_distance_by_interval=[6.5] * 10,
+    )
+    device.adverts = {
+        "yunas": yunas_advert,  # type: ignore[dict-item]
+        "technik": technik_advert,  # type: ignore[dict-item]
+    }
+
+    # Run min-distance algorithm
+    coordinator._refresh_area_by_min_distance(device)
+
+    return device
+
+
 class TestScannerlessRoomScenarios:
     """
     Integration tests for the Lagerraum (storage room) scenario.
@@ -327,64 +386,27 @@ class TestScannerlessRoomScenarios:
 
         Note: We need at least 2 scanners for UKF_MIN_SCANNERS requirement.
         """
-        device_addr = "AA:BB:CC:DD:EE:01"
+        device = _run_lagerraum_virtual_scenario(coordinator)
         lagerraum_area = "area-lagerraum"
-        yunas_area = "area-yunas-zimmer"
-        technik_area = "area-technikraum"
-
-        device = _configure_device(coordinator, device_addr)
-
-        # Set up two scanners (required by UKF_MIN_SCANNERS = 2)
-        yunas_scanner = _make_scanner_device("yunas-scanner", yunas_area, floor_id="floor-og", floor_level=1)
-        technik_scanner = _make_scanner_device("technik-scanner", technik_area, floor_id="floor-kg", floor_level=-1)
-        coordinator._scanners.add(yunas_scanner)
-        coordinator._scanners.add(technik_scanner)
-
-        # Create button-trained profile for Lagerraum (with readings from both scanners)
-        scanner_addrs = [yunas_scanner.address, technik_scanner.address]
-        trained_rssi = [-75.0, -72.0]  # What we see when in Lagerraum
-        profile = _create_button_trained_profile(lagerraum_area, scanner_addrs, trained_rssi)
-        # Use device.address (lowercase) as key - BermudaDevice normalizes addresses
-        coordinator.correlations[device.address] = {lagerraum_area: profile}
-
-        # Set up UKF with current readings that match the trained profile well
-        current_readings = {
-            yunas_scanner.address: -76.0,  # Close to trained -75
-            technik_scanner.address: -73.0,  # Close to trained -72
-        }
-        _setup_ukf_with_readings(coordinator, device.address, current_readings)
-
-        # Set up Yunas Zimmer as the current physical scanner option (5.2m away)
-        yunas_advert = _make_advert(
-            "yunas-scanner",
-            yunas_area,
-            distance=5.2,
-            rssi=-76.0,
-            floor_id="floor-og",
-            floor_level=1,
-            hist_distance_by_interval=[5.2] * 10,
-        )
-        technik_advert = _make_advert(
-            "technik-scanner",
-            technik_area,
-            distance=6.5,
-            rssi=-73.0,
-            floor_id="floor-kg",
-            floor_level=-1,
-            hist_distance_by_interval=[6.5] * 10,
-        )
-        device.adverts = {
-            "yunas": yunas_advert,  # type: ignore[dict-item]
-            "technik": technik_advert,  # type: ignore[dict-item]
-        }
-
-        # Run min-distance algorithm
-        coordinator._refresh_area_by_min_distance(device)
 
         # Verify: Device should be in Lagerraum due to virtual distance
         assert device.area_id == lagerraum_area, (
             f"Expected area {lagerraum_area}, got {device.area_id}. Scannerless room with good fingerprint should win."
         )
+
+    def test_virtual_winner_publishes_virtual_decision(self, coordinator: BermudaDataUpdateCoordinator) -> None:
+        """The diagnostics of a virtual win describe the virtual room, not a physical min-distance decision."""
+        device = _run_lagerraum_virtual_scenario(coordinator)
+        assert device.area_id == "area-lagerraum"
+
+        tests = device.area_tests
+        assert tests is not None
+        assert tests.decision_path == "VIRTUAL"
+        assert tests.is_scannerless_room is True
+        assert tests.virtual_distance == pytest.approx(device.area_distance)
+        assert tests.areas[1] == (device.area_name or "")
+        assert tests.stable_sensortext().startswith("👻VIRTUAL: WIN via virtual distance")
+        assert device.diag_area_switch == tests.sensortext()
 
     def test_physical_scanner_wins_with_poor_fingerprint_match(self, coordinator: BermudaDataUpdateCoordinator) -> None:
         """

@@ -126,6 +126,7 @@ class TestBermudaTrainingRoomSelect:
         assert select.has_entity_name is True
         assert select.translation_key == "training_room"
         assert select.entity_category == EntityCategory.CONFIG
+        assert select.entity_registry_visible_default is False
         assert select.icon == "mdi:map-marker-radius"
 
     def test_unique_id(self) -> None:
@@ -308,6 +309,7 @@ class TestBermudaTrainingFloorSelect:
         assert select.has_entity_name is True
         assert select.translation_key == "training_floor"
         assert select.entity_category == EntityCategory.CONFIG
+        assert select.entity_registry_visible_default is False
         assert select.icon == "mdi:floor-plan"
 
     def test_unique_id(self) -> None:

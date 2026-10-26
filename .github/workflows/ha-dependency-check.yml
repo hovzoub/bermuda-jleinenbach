@@ -9,13 +9,14 @@ on:
   workflow_dispatch:
     inputs:
       ha_version:
-        description: "Specific HA version to test (e.g., 2025.1.0)"
+        description: "Specific HA version to test (e.g., 2026.6.0)"
         required: false
         type: string
 
 env:
-  DEFAULT_PYTHON: "3.13"
-  UV_SYSTEM_PYTHON: 1
+  DEFAULT_PYTHON: "3.14"
+  # No UV_SYSTEM_PYTHON here: both jobs install into the activated .venv. With it,
+  # uv ignores the venv and installs into the runner's system Python.
 
 jobs:
   check-latest-ha:
@@ -23,16 +24,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
           version: "0.7.9"
           enable-cache: true
 
       - name: Set up Python ${{ env.DEFAULT_PYTHON }}
-        uses: actions/setup-python@v5.6.0
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ env.DEFAULT_PYTHON }}
 
@@ -48,7 +49,7 @@ jobs:
           echo "Testing with Home Assistant version: $HA_VERSION"
 
       - name: Create virtual environment
-        run: uv venv .venv
+        run: uv venv --python "$DEFAULT_PYTHON" .venv
 
       - name: Install Home Assistant
         run: |
@@ -67,11 +68,22 @@ jobs:
             uv pip install -r requirements.txt
           fi
 
+      - name: Install requirements of the integrations Bermuda loads with
+        run: |
+          source .venv/bin/activate
+          # Home Assistant installs these at runtime; a plain import needs them up front
+          # (bluetooth -> usb -> serialx -> aioesphomeapi). A package that fails to build
+          # only warns: the import test below decides.
+          python scripts/ha_component_requirements.py > ha-component-requirements.txt
+          while read -r requirement; do
+            uv pip install "$requirement" || echo "::warning::Could not install $requirement"
+          done < ha-component-requirements.txt
+
       - name: Check for dependency conflicts
         id: pip-check
         run: |
           source .venv/bin/activate
-          if pip check; then
+          if uv pip check; then
             echo "status=success" >> $GITHUB_OUTPUT
             echo "No dependency conflicts found"
           else
@@ -83,16 +95,17 @@ jobs:
         id: import-test
         run: |
           source .venv/bin/activate
-          cd custom_components
-          if python -c "import bermuda" 2>/dev/null; then
+          if python -c "import custom_components.bermuda; import custom_components.bermuda.device_tracker"; then
             echo "status=success" >> $GITHUB_OUTPUT
             echo "Integration imports successfully"
           else
             echo "status=failed" >> $GITHUB_OUTPUT
-            echo "::warning::Integration import failed"
+            echo "::error::Integration import failed"
+            exit 1
           fi
 
       - name: Generate summary
+        if: always()
         run: |
           echo "## Home Assistant Compatibility Check" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -107,21 +120,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
         with:
           version: "0.7.9"
           enable-cache: true
 
       - name: Set up Python ${{ env.DEFAULT_PYTHON }}
-        uses: actions/setup-python@v5.6.0
+        uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ env.DEFAULT_PYTHON }}
 
       - name: Create clean environment
-        run: uv venv .venv
+        run: uv venv --python "$DEFAULT_PYTHON" .venv
 
       - name: Install Home Assistant with constraints
         run: |
@@ -149,7 +162,7 @@ jobs:
         id: verify
         run: |
           source .venv/bin/activate
-          pip check && echo "status=success" >> $GITHUB_OUTPUT || echo "status=conflict" >> $GITHUB_OUTPUT
+          uv pip check && echo "status=success" >> $GITHUB_OUTPUT || echo "status=conflict" >> $GITHUB_OUTPUT
 
       - name: Generate summary
         run: |

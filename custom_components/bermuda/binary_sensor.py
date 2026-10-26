@@ -80,10 +80,9 @@ class BermudaScannerOnlineSensor(BermudaEntity, BinarySensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     # Exclude ALL extra_state_attributes from the recorder database.
-    # last_seen_age_seconds is recalculated every coordinator cycle (~1.05s),
-    # creating a new DB row per cycle per scanner entity. This is pure
-    # real-time diagnostic info with no historical value.
     # The binary state itself (ON/OFF) is still recorded normally.
+    # Note: this does not prevent state_changed events; attributes must not
+    # change on every coordinator cycle, so no age value is exposed here.
     _unrecorded_attributes = frozenset({MATCH_ALL})
 
     @property
@@ -104,14 +103,6 @@ class BermudaScannerOnlineSensor(BermudaEntity, BinarySensorEntity):
     @property
     def extra_state_attributes(self) -> Mapping[str, Any] | None:
         """Return additional state attributes."""
-        last_seen = self._device.last_seen
-        if last_seen == 0:
-            return {
-                "last_seen_age_seconds": None,
-                "timeout_seconds": SCANNER_ACTIVITY_TIMEOUT,
-            }
-        age = round(monotonic_time_coarse() - last_seen, 1)
         return {
-            "last_seen_age_seconds": age,
             "timeout_seconds": SCANNER_ACTIVITY_TIMEOUT,
         }

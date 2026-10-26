@@ -14,6 +14,11 @@ permissions:
 jobs:
   hassfest:
     name: Hassfest Validation & Auto-Fix
+    # A fork PR's head branch is normally missing in this repository, so the
+    # checkout below fails. Its token is also read-only by default, so the auto-commit
+    # could not push a fix anyway. Fork PRs are still validated by the hassfest
+    # job in tests.yaml.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

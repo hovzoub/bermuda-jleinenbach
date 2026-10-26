@@ -910,10 +910,29 @@ class BermudaDevice:
             return False
         return bool(self.area_state_retained or age > AREA_MAX_AD_AGE)
 
+    def area_state_flags(self, *, stamp_now: float | None = None) -> dict[str, bool | str | None]:
+        """
+        Expose the area state flags that only change on state transitions.
+
+        Unlike area_state_metadata(), this contains no continuously changing
+        values: the flags only flip when a threshold is crossed. That makes it
+        safe to publish as entity attributes; Home Assistant fires a
+        state_changed event whenever any attribute differs from the previous
+        write, regardless of _unrecorded_attributes.
+        """
+        nowstamp = stamp_now if stamp_now is not None else monotonic_time_coarse()
+        area_age = self._area_state_age(nowstamp)
+        return {
+            "area_is_stale": bool(area_age is not None and area_age > AREA_MAX_AD_AGE),
+            "area_retained": self.area_is_retained(stamp_now=nowstamp),
+            "area_source": self.area_state_source,
+        }
+
     def area_state_metadata(self, *, stamp_now: float | None = None) -> dict[str, float | bool | str | None]:
         """Expose metadata describing the freshness/retention of the published area."""
         nowstamp = stamp_now if stamp_now is not None else monotonic_time_coarse()
         area_age = self._area_state_age(nowstamp)
+        flags = self.area_state_flags(stamp_now=nowstamp)
         distance_age = None
         if self.area_distance_stamp is not None:
             distance_age = max(0.0, nowstamp - self.area_distance_stamp)
@@ -926,10 +945,10 @@ class BermudaDevice:
         return {
             "last_good_area_age_s": area_age,
             "last_good_distance_age_s": distance_age,
-            "area_is_stale": bool(area_age is not None and area_age > AREA_MAX_AD_AGE),
-            "area_retained": self.area_is_retained(stamp_now=nowstamp),
+            "area_is_stale": flags["area_is_stale"],
+            "area_retained": flags["area_retained"],
             "area_retention_seconds_remaining": retention_remaining,
-            "area_source": self.area_state_source,
+            "area_source": flags["area_source"],
         }
 
     def update_co_visibility(self, area_id: str, visible_scanners: set[str], all_candidate_scanners: set[str]) -> None:

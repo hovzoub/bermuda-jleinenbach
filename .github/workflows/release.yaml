@@ -2,16 +2,33 @@
 name: Release
 
 # Lifted shamelessly from https://github.com/custom-components/grocy
+#
+# Three entry points:
+# - release (published): build, sign and upload bermuda.zip to the release.
+# - workflow_dispatch:   dry run; build, verify and sign, never upload to a
+#                        release.
+# - pull_request:        dry run whenever this workflow file changes.
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp into the dry-run package"
+        required: false
+        default: "0.0.0-dryrun"
+        type: string
+  pull_request:
+    paths:
+      - ".github/workflows/release.yaml"
 
 permissions: {}
 
 jobs:
   release_zip_file:
     name: Prepare and upload release asset
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -20,14 +37,21 @@ jobs:
       BERMUDA_ROOT_DIR: "${{ github.workspace }}/custom_components/bermuda"
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set release version number in files
+        id: version
         shell: bash
+        env:
+          VERSION_IN: ${{ github.event.release.tag_name }}
         run: |
-          version="${{ github.event.release.tag_name }}"
+          version="${VERSION_IN}"
           version="${version,,}"
           version="${version#v}"
+          if [[ ! "${version}" =~ ^[0-9a-z][0-9a-z.+-]*$ ]]; then
+            echo "::error::Invalid version format"
+            exit 1
+          fi
           # update const.py
           sed -i \
             "/^VERSION.*=./c\VERSION = \"${version}\"" \
@@ -35,6 +59,7 @@ jobs:
           # update manifest.json
           jq ".version = \"${version}\"" "${{ env.BERMUDA_ROOT_DIR }}/manifest.json" > "${{ env.BERMUDA_ROOT_DIR }}/manifest.json.tmp"
           mv "${{ env.BERMUDA_ROOT_DIR }}/manifest.json.tmp" "${{ env.BERMUDA_ROOT_DIR }}/manifest.json"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Zip the integration directory
         run: |
@@ -42,11 +67,80 @@ jobs:
           zip bermuda.zip -r ./
 
       - name: 🔏 Sign release package
-        uses: sigstore/gh-action-sigstore-python@v3.0.1
+        uses: sigstore/gh-action-sigstore-python@v3.4.0
         with:
           inputs: "${{ env.BERMUDA_ROOT_DIR }}/bermuda.zip"
 
       - name: "Upload the ZIP file to the release"
-        uses: softprops/action-gh-release@v2.3.2
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v3.0.2
         with:
           files: ${{ env.BERMUDA_ROOT_DIR }}/bermuda.zip
+
+  release_dry_run:
+    name: Dry run (build, verify, sign; no upload)
+    if: github.event_name != 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      BERMUDA_ROOT_DIR: "${{ github.workspace }}/custom_components/bermuda"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set release version number in files
+        id: version
+        shell: bash
+        env:
+          VERSION_IN: ${{ github.event.release.tag_name || inputs.version || '0.0.0-dryrun' }}
+        run: |
+          version="${VERSION_IN}"
+          version="${version,,}"
+          version="${version#v}"
+          if [[ ! "${version}" =~ ^[0-9a-z][0-9a-z.+-]*$ ]]; then
+            echo "::error::Invalid version format"
+            exit 1
+          fi
+          # update const.py
+          sed -i \
+            "/^VERSION.*=./c\VERSION = \"${version}\"" \
+            "${{ env.BERMUDA_ROOT_DIR }}/const.py"
+          # update manifest.json
+          jq ".version = \"${version}\"" "${{ env.BERMUDA_ROOT_DIR }}/manifest.json" > "${{ env.BERMUDA_ROOT_DIR }}/manifest.json.tmp"
+          mv "${{ env.BERMUDA_ROOT_DIR }}/manifest.json.tmp" "${{ env.BERMUDA_ROOT_DIR }}/manifest.json"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Zip the integration directory
+        run: |
+          cd "${{ env.BERMUDA_ROOT_DIR }}"
+          zip bermuda.zip -r ./
+
+      - name: Verify package
+        if: github.event_name != 'release'
+        shell: bash
+        env:
+          EXPECTED: ${{ steps.version.outputs.version }}
+        run: |
+          cd "${{ env.BERMUDA_ROOT_DIR }}"
+          manifest_version="$(unzip -p bermuda.zip manifest.json | jq -r .version)"
+          const_version="$(unzip -p bermuda.zip const.py | sed -n 's/^VERSION = "\(.*\)"$/\1/p')"
+          echo "expected=${EXPECTED} manifest=${manifest_version} const=${const_version}"
+          if [[ -z "${EXPECTED}" || "${manifest_version}" != "${EXPECTED}" || "${const_version}" != "${EXPECTED}" ]]; then
+            echo "::error::Version mismatch in bermuda.zip"
+            exit 1
+          fi
+
+      - name: 🔏 Sign release package
+        # PRs from forks get no OIDC token; skip signing there.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: sigstore/gh-action-sigstore-python@v3.4.0
+        with:
+          inputs: "${{ env.BERMUDA_ROOT_DIR }}/bermuda.zip"
+
+      - name: Check signature bundle
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          ls -l "${{ env.BERMUDA_ROOT_DIR }}"/bermuda.zip*
+          test -s "${{ env.BERMUDA_ROOT_DIR }}/bermuda.zip.sigstore.json"

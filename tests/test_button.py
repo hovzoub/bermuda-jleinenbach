@@ -101,6 +101,7 @@ class TestBermudaTrainingButton:
         assert button.has_entity_name is True
         assert button.translation_key == "training_learn"
         assert button.entity_category == EntityCategory.CONFIG
+        assert button.entity_registry_visible_default is False
 
     def test_button_icons(self) -> None:
         """Test that button has correct icons defined."""
@@ -228,6 +229,7 @@ class TestBermudaResetTrainingButton:
         assert button.has_entity_name is True
         assert button.translation_key == "reset_training"
         assert button.entity_category == EntityCategory.CONFIG
+        assert button.entity_registry_visible_default is False
         assert button.icon == "mdi:eraser"
 
     def test_unique_id(self) -> None:

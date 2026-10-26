@@ -5,7 +5,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from homeassistant.helpers.json import json_bytes
 
+from custom_components.bermuda.area_selection import AreaTests
 from custom_components.bermuda.const import ADDR_TYPE_PRIVATE_BLE_DEVICE, CONF_DEVICES
 from custom_components.bermuda.services import (
     DUMP_DEVICE_SOFT_LIMIT,
@@ -152,6 +154,34 @@ class TestBermudaServiceHandler:
             assert handler.redact_data(42) == 42
             assert handler.redact_data(None) is None
             assert handler.redact_data(3.14) == 3.14
+
+    def test_redact_data_dataclass(self) -> None:
+        """MAC addresses inside a dataclass value (such as AreaTests in dump_devices) are redacted."""
+        handler = self._create_handler()
+        handler.stamp_redactions_expiry = 200.0
+        tests = AreaTests(
+            scannername=("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"), offline_scanner_addrs="aa:bb:cc:dd:ee:ff"
+        )
+
+        with patch("custom_components.bermuda.services.monotonic_time_coarse", return_value=100.0):
+            result = handler.redact_data({"area_tests": tests})
+
+        rendered = json_bytes(result).decode()
+        assert "aa:bb:cc:dd:ee:ff" not in rendered
+        assert "11:22:33:44:55:66" not in rendered
+        assert result["area_tests"]["decision_path"] == "UNKNOWN"
+        assert tests.scannername == ("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66")
+
+    def test_redact_data_tuple(self) -> None:
+        """MAC addresses inside a tuple are redacted."""
+        handler = self._create_handler()
+        handler.stamp_redactions_expiry = 200.0
+
+        with patch("custom_components.bermuda.services.monotonic_time_coarse", return_value=100.0):
+            result = handler.redact_data(("aa:bb:cc:dd:ee:ff", "other"))
+
+        assert "aa:bb:cc:dd:ee:ff" not in json_bytes(result).decode()
+        assert result[1] == "other"
 
     def test_redact_data_generic_mac_redaction(self) -> None:
         """Test that redact_data handles generic MAC addresses."""
